@@ -49,6 +49,7 @@ build_abi() {
     go build \
       -buildmode=c-shared \
       -trimpath \
+      -tags with_gvisor \
       -o "$dest/libtun2socks.so" \
       .
 

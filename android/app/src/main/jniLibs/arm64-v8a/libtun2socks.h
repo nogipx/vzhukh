@@ -29,6 +29,9 @@ extern const char *_GoStringPtr(_GoString_ s);
 static void logError(const char* msg) {
     __android_log_print(ANDROID_LOG_ERROR, "tun2socks", "%s", msg);
 }
+static void logDebug(const char* msg) {
+    __android_log_print(ANDROID_LOG_DEBUG, "tun2socks", "%s", msg);
+}
 
 #line 1 "cgo-generated-wrapper"
 

@@ -59,72 +59,54 @@ class SshTunnel {
   }
 
   Future<void> _handleSocksClient(Socket client) async {
+    final reader = _BufferedReader(client);
     try {
-      // Read SOCKS5 greeting: version + auth methods
-      final greeting = await _readBytes(client, 2);
-      if (greeting[0] != 5) {
-        client.destroy();
-        return;
-      }
-      final nmethods = greeting[1];
-      await _readBytes(client, nmethods); // consume methods
-      // Reply: no auth required
-      client.add([5, 0]);
+      // Read SOCKS5 greeting: version + nmethods
+      final greeting = await reader.read(2);
+      if (greeting[0] != 5) return;
+      await reader.read(greeting[1]); // consume auth methods
+      client.add([5, 0]); // no auth
 
-      // Read request
-      final req = await _readBytes(client, 4);
+      // Read request header
+      final req = await reader.read(4);
       if (req[0] != 5 || req[1] != 1) {
-        // Only CONNECT supported
         client.add([5, 7, 0, 1, 0, 0, 0, 0, 0, 0]);
-        client.destroy();
         return;
       }
 
       String host;
       final atyp = req[3];
       if (atyp == 1) {
-        // IPv4
-        final addr = await _readBytes(client, 4);
+        final addr = await reader.read(4);
         host = addr.join('.');
       } else if (atyp == 3) {
-        // Domain
-        final lenByte = await _readBytes(client, 1);
-        final domain = await _readBytes(client, lenByte[0]);
-        host = String.fromCharCodes(domain);
+        final len = (await reader.read(1))[0];
+        host = String.fromCharCodes(await reader.read(len));
       } else if (atyp == 4) {
-        // IPv6
-        final addr = await _readBytes(client, 16);
-        host = '[${_formatIpv6(addr)}]';
+        host = '[${_formatIpv6(await reader.read(16))}]';
       } else {
         client.add([5, 8, 0, 1, 0, 0, 0, 0, 0, 0]);
-        client.destroy();
         return;
       }
 
-      final portBytes = await _readBytes(client, 2);
+      final portBytes = await reader.read(2);
       final port = (portBytes[0] << 8) | portBytes[1];
 
-      // Open SSH channel to target
       final channel = await _client!.forwardLocal(host, port);
 
-      // Reply success
       client.add([5, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
 
-      // Pipe bidirectionally
-      channel.stream.cast<List<int>>().pipe(client);
-      client.cast<List<int>>().pipe(channel.sink);
+      // Await both pipes — keeps the connection alive until both sides close.
+      await Future.wait([
+        channel.stream.cast<List<int>>().pipe(client),
+        reader.remainingStream().pipe(channel.sink),
+      ]);
     } catch (_) {
+      // ignore
+    } finally {
+      reader.cancel();
       client.destroy();
     }
-  }
-
-  Future<List<int>> _readBytes(Socket socket, int count) async {
-    final buf = <int>[];
-    await for (final chunk in socket) {
-      buf.addAll(chunk);
-      if (buf.length >= count) break;
-    }
-    return buf.sublist(0, count);
   }
 
   String _formatIpv6(List<int> bytes) {
@@ -142,4 +124,61 @@ class SshTunnel {
     _client?.close();
     _client = null;
   }
+}
+
+/// Single-subscription buffered reader over a Socket stream.
+class _BufferedReader {
+  final List<int> _buf = [];
+  late final StreamSubscription<List<int>> _sub;
+  Completer<void>? _pending;
+  bool _done = false;
+
+  _BufferedReader(Stream<List<int>> stream) {
+    _sub = stream.listen(
+      (chunk) {
+        _buf.addAll(chunk);
+        _pending?.complete();
+        _pending = null;
+      },
+      onDone: () {
+        _done = true;
+        _pending?.complete();
+        _pending = null;
+      },
+      onError: (e) {
+        _done = true;
+        _pending?.completeError(e);
+        _pending = null;
+      },
+      cancelOnError: true,
+    );
+  }
+
+  Future<List<int>> read(int count) async {
+    while (_buf.length < count) {
+      if (_done) throw StateError('Stream ended before $count bytes');
+      _pending = Completer<void>();
+      await _pending!.future;
+    }
+    final result = List<int>.unmodifiable(_buf.sublist(0, count));
+    _buf.removeRange(0, count);
+    return result;
+  }
+
+  /// Returns a stream: buffered bytes first, then live data from the socket.
+  /// After calling this, do not call [read] again.
+  Stream<List<int>> remainingStream() {
+    final controller = StreamController<List<int>>();
+    if (_buf.isNotEmpty) {
+      controller.add(List<int>.of(_buf));
+      _buf.clear();
+    }
+    _sub.onData((chunk) => controller.add(chunk));
+    _sub.onDone(() => controller.close());
+    _sub.onError((Object e, StackTrace s) => controller.addError(e, s));
+    controller.onCancel = _sub.cancel;
+    return controller.stream;
+  }
+
+  void cancel() => _sub.cancel();
 }

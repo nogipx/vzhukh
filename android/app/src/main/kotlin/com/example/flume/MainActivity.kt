@@ -40,14 +40,17 @@ class MainActivity : FlutterActivity() {
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         channel?.setMethodCallHandler { call, result ->
             when (call.method) {
-                "startVpn" -> handleStartVpn(result)
+                "startVpn" -> handleStartVpn(call.arguments as? Map<*, *>, result)
                 "stopVpn" -> handleStopVpn(result)
                 else -> result.notImplemented()
             }
         }
     }
 
-    private fun handleStartVpn(result: MethodChannel.Result) {
+    private var pendingSshHost: String = ""
+
+    private fun handleStartVpn(args: Map<*, *>?, result: MethodChannel.Result) {
+        pendingSshHost = args?.get("sshHost") as? String ?: ""
         // Check VPN permission first
         val intent = VpnService.prepare(this)
         if (intent != null) {
@@ -84,7 +87,7 @@ class MainActivity : FlutterActivity() {
 
     private fun startTunAndReply(result: MethodChannel.Result) {
         try {
-            val fd = vpnService!!.startTun()
+            val fd = vpnService!!.startTun(pendingSshHost)
             result.success(fd)
         } catch (e: Exception) {
             result.error("TUN_ERROR", e.message, null)

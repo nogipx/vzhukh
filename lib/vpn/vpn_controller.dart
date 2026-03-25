@@ -30,7 +30,7 @@ class VpnController {
       await _tunnel!.start();
 
       // Step 2: Request VPN permission and create TUN interface
-      _tunFd = await _channel.invokeMethod<int>('startVpn');
+      _tunFd = await _channel.invokeMethod<int>('startVpn', {'sshHost': config.host});
       if (_tunFd == null || _tunFd! <= 0) {
         throw Exception('Failed to create TUN interface (fd=$_tunFd)');
       }

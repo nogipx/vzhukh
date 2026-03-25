@@ -13,12 +13,17 @@ package main
 static void logError(const char* msg) {
     __android_log_print(ANDROID_LOG_ERROR, "tun2socks", "%s", msg);
 }
+static void logDebug(const char* msg) {
+    __android_log_print(ANDROID_LOG_DEBUG, "tun2socks", "%s", msg);
+}
 */
 import "C"
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"os"
@@ -27,7 +32,8 @@ import (
 	"unsafe"
 
 	tun "github.com/sagernet/sing-tun"
-	"github.com/sagernet/sing/common/logger"
+	singbuf "github.com/sagernet/sing/common/buf"
+	singlogger "github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"golang.org/x/net/proxy"
@@ -39,6 +45,13 @@ func logErr(format string, args ...any) {
 	fmt.Fprintln(os.Stderr, msg)
 	cs := C.CString(msg)
 	C.logError(cs)
+	C.free(unsafe.Pointer(cs))
+}
+
+func logDbg(format string, args ...any) {
+	msg := fmt.Sprintf(format, args...)
+	cs := C.CString(msg)
+	C.logDebug(cs)
 	C.free(unsafe.Pointer(cs))
 }
 
@@ -102,12 +115,12 @@ func tun2socks_start(tunFd C.int, socksAddr *C.char) C.int {
 
 	handler := &socksHandler{dialer: dialer}
 
-	stack, err = tun.NewStack("system", tun.StackOptions{
+	stack, err = tun.NewStack("gvisor", tun.StackOptions{
 		Context:    ctx,
 		Tun:        tunDev,
 		TunOptions: tunOpts,
 		Handler:    handler,
-		Logger:     logger.NOP(),
+		Logger:     &stackLogger{},
 		UDPTimeout: 60 * time.Second,
 	})
 	if err != nil {
@@ -125,6 +138,7 @@ func tun2socks_start(tunFd C.int, socksAddr *C.char) C.int {
 	}
 
 	running = true
+	logDbg("tun2socks started: fd=%d socks=%s", dupFd, addr)
 	return 0
 }
 
@@ -171,6 +185,7 @@ func (h *socksHandler) NewConnectionEx(
 	destination M.Socksaddr,
 	onClose N.CloseHandlerFunc,
 ) {
+	logDbg("tcp: %s -> %s", source, destination)
 	go func() {
 		defer func() {
 			conn.Close()
@@ -200,11 +215,92 @@ func (h *socksHandler) NewPacketConnectionEx(
 	destination M.Socksaddr,
 	onClose N.CloseHandlerFunc,
 ) {
-	// UDP: best-effort forwarding via SOCKS5 UDP associate.
-	// Many SOCKS5 servers (including SSH dynamic) don't support UDP — drop silently.
-	if onClose != nil {
-		onClose(nil)
+	logDbg("udp: %s -> %s", source, destination)
+	// Only handle DNS (port 53) via DNS-over-TCP through the SOCKS5 tunnel.
+	// All other UDP is dropped — SSH dynamic forwarding doesn't support UDP associate.
+	if destination.Port != 53 {
+		conn.Close()
+		if onClose != nil {
+			onClose(nil)
+		}
+		return
 	}
+
+	// Hand off conn ownership to the goroutine — do NOT defer close here.
+	go func() {
+		defer func() {
+			conn.Close()
+			if onClose != nil {
+				onClose(nil)
+			}
+		}()
+		h.handleDNSOverTCP(ctx, conn, destination)
+	}()
+}
+
+// handleDNSOverTCP reads UDP DNS queries from conn, converts each to TCP DNS
+// (RFC 1035 §4.2.2: 2-byte length prefix), sends through SOCKS5, and writes
+// the response back as a UDP packet.
+func (h *socksHandler) handleDNSOverTCP(ctx context.Context, conn N.PacketConn, destination M.Socksaddr) {
+	logDbg("dns loop start: %s", destination)
+	singBuf := singbuf.New()
+	defer singBuf.Release()
+
+	for {
+		singBuf.Reset()
+		dest, err := conn.ReadPacket(singBuf)
+		if err != nil {
+			logDbg("dns loop read err: %v", err)
+			return
+		}
+
+		logDbg("dns query: %d bytes -> %s", singBuf.Len(), dest)
+		query := append([]byte(nil), singBuf.Bytes()...) // copy before buffer reset
+		go h.forwardDNSTCP(ctx, conn, dest, query)
+	}
+}
+
+func (h *socksHandler) forwardDNSTCP(ctx context.Context, conn N.PacketConn, dest M.Socksaddr, query []byte) {
+	logDbg("dns forward: %d bytes -> %s", len(query), dest)
+	tcp, err := h.dialer.Dial("tcp", dest.String())
+	if err != nil {
+		logErr("tun2socks: dns tcp dial %s: %v", dest, err)
+		return
+	}
+	defer tcp.Close()
+	tcp.SetDeadline(time.Now().Add(5 * time.Second))
+
+	// Write length-prefixed query.
+	lenBuf := make([]byte, 2)
+	binary.BigEndian.PutUint16(lenBuf, uint16(len(query)))
+	if _, err = tcp.Write(append(lenBuf, query...)); err != nil {
+		logErr("dns write %s: %v", dest, err)
+		return
+	}
+	logDbg("dns wrote %d bytes to %s", len(query)+2, dest)
+
+	// Read 2-byte response length.
+	if _, err = io.ReadFull(tcp, lenBuf); err != nil {
+		logErr("dns read len %s: %v", dest, err)
+		return
+	}
+	respLen := int(binary.BigEndian.Uint16(lenBuf))
+	logDbg("dns resp len=%d from %s", respLen, dest)
+	if respLen == 0 || respLen > 65535 {
+		logErr("dns bad respLen=%d from %s", respLen, dest)
+		return
+	}
+
+	// Read response body.
+	resp := make([]byte, respLen)
+	if _, err = io.ReadFull(tcp, resp); err != nil {
+		logErr("dns read body %s: %v", dest, err)
+		return
+	}
+
+	// Write back as UDP packet.
+	respBuf := singbuf.As(resp)
+	conn.WritePacket(respBuf, dest)
 }
 
 func copyConn(dst, src net.Conn) {
@@ -221,5 +317,18 @@ func copyConn(dst, src net.Conn) {
 		}
 	}
 }
+
+// stackLogger forwards sing-tun internal logs to Android logcat.
+type stackLogger struct{}
+
+var _ singlogger.Logger = (*stackLogger)(nil)
+
+func (l *stackLogger) Trace(args ...any) { logDbg("[stack] %v", fmt.Sprint(args...)) }
+func (l *stackLogger) Debug(args ...any) { logDbg("[stack] %v", fmt.Sprint(args...)) }
+func (l *stackLogger) Info(args ...any)  { logDbg("[stack] %v", fmt.Sprint(args...)) }
+func (l *stackLogger) Warn(args ...any)  { logErr("[stack] %v", fmt.Sprint(args...)) }
+func (l *stackLogger) Error(args ...any) { logErr("[stack] %v", fmt.Sprint(args...)) }
+func (l *stackLogger) Fatal(args ...any) { logErr("[stack] %v", fmt.Sprint(args...)) }
+func (l *stackLogger) Panic(args ...any) { logErr("[stack] %v", fmt.Sprint(args...)) }
 
 func main() {}
