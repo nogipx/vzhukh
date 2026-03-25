@@ -51,7 +51,11 @@ class FlumeVpnService : VpnService() {
         return START_NOT_STICKY
     }
 
-    fun startTun(excludeIp: String): Int {
+    fun startTun(
+        excludeIp: String,
+        routingMode: String = "blacklist",
+        routingPackages: List<String> = emptyList(),
+    ): Int {
         stopTun()
 
         val builder = Builder()
@@ -62,13 +66,20 @@ class FlumeVpnService : VpnService() {
             .setMtu(1500)
             .setBlocking(false)
 
-        // Route all IPv4 except the SSH server IP so the SSH connection
-        // itself bypasses the VPN (no loop). Same effect as protect() but
-        // works without raw fd access.
         for ((addr, prefix) in routesExcluding(excludeIp)) {
             builder.addRoute(addr, prefix)
         }
-        builder.addRoute("::", 0) // route all IPv6
+        builder.addRoute("::", 0)
+
+        routingPackages.forEach { pkg ->
+            try {
+                if (routingMode == "whitelist") {
+                    builder.addAllowedApplication(pkg)
+                } else {
+                    builder.addDisallowedApplication(pkg)
+                }
+            } catch (_: Exception) {}
+        }
 
         tunPfd = builder.establish()
             ?: throw IllegalStateException("VpnService.Builder.establish() returned null")

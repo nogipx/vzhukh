@@ -1,8 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../models/app_routing_config.dart';
 import '../models/server_config.dart';
 import '../vpn/vpn_controller.dart';
+import 'app_picker_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -21,6 +24,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool _useKey = false;
   bool _obscurePass = true;
+  AppRoutingConfig _routing = const AppRoutingConfig.empty();
 
   final _vpn = VpnController();
 
@@ -48,11 +52,40 @@ class _HomeScreenState extends State<HomeScreen> {
         _passCtrl.text = cfg.password ?? '';
       }
     } catch (_) {}
+
+    try {
+      final rawRouting = prefs.getString('app_routing');
+      if (rawRouting != null) {
+        setState(() {
+          _routing = AppRoutingConfig.fromJson(
+            Map<String, dynamic>.from(jsonDecode(rawRouting) as Map),
+          );
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _saveConfig(ServerConfig cfg) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('server_config', jsonEncode(cfg.toJson()));
+  }
+
+  Future<void> _saveRouting(AppRoutingConfig routing) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('app_routing', jsonEncode(routing.toJson()));
+  }
+
+  Future<void> _openAppPicker() async {
+    final result = await Navigator.push<AppRoutingConfig>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AppPickerScreen(initial: _routing),
+      ),
+    );
+    if (result != null) {
+      setState(() => _routing = result);
+      await _saveRouting(result);
+    }
   }
 
   Future<void> _toggle() async {
@@ -72,7 +105,7 @@ class _HomeScreenState extends State<HomeScreen> {
       privateKey: _useKey ? _keyCtrl.text : null,
     );
     await _saveConfig(cfg);
-    await _vpn.connect(cfg);
+    await _vpn.connect(cfg, routing: _routing);
   }
 
   @override
@@ -173,7 +206,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           ? 'Required'
                           : null,
                 ),
-              const SizedBox(height: 32),
+              const SizedBox(height: 16),
+              if (Platform.isAndroid) _AppRoutingTile(
+                routing: _routing,
+                onTap: _openAppPicker,
+              ),
+              const SizedBox(height: 16),
               ValueListenableBuilder(
                 valueListenable: _vpn.status,
                 builder: (context, status, _) {
@@ -233,6 +271,29 @@ class _HomeScreenState extends State<HomeScreen> {
         suffixIcon: suffixIcon,
       ),
       validator: validator,
+    );
+  }
+}
+
+class _AppRoutingTile extends StatelessWidget {
+  final AppRoutingConfig routing;
+  final VoidCallback onTap;
+
+  const _AppRoutingTile({required this.routing, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final count = routing.packages.length;
+    final subtitle = count == 0
+        ? 'All apps through tunnel'
+        : '${routing.mode == AppRoutingMode.whitelist ? 'Only' : 'Except'} $count app${count == 1 ? '' : 's'}';
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.apps),
+      title: const Text('App routing'),
+      subtitle: Text(subtitle),
+      trailing: const Icon(Icons.chevron_right),
+      onTap: onTap,
     );
   }
 }

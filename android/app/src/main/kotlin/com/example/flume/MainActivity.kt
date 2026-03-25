@@ -4,11 +4,15 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.net.VpnService
 import android.os.IBinder
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import java.io.ByteArrayOutputStream
 
 class MainActivity : FlutterActivity() {
 
@@ -42,15 +46,21 @@ class MainActivity : FlutterActivity() {
             when (call.method) {
                 "startVpn" -> handleStartVpn(call.arguments as? Map<*, *>, result)
                 "stopVpn" -> handleStopVpn(result)
+                "getInstalledApps" -> handleGetInstalledApps(result)
                 else -> result.notImplemented()
             }
         }
     }
 
     private var pendingSshHost: String = ""
+    private var pendingRoutingMode: String = "blacklist"
+    private var pendingRoutingPackages: List<String> = emptyList()
 
     private fun handleStartVpn(args: Map<*, *>?, result: MethodChannel.Result) {
         pendingSshHost = args?.get("sshHost") as? String ?: ""
+        pendingRoutingMode = args?.get("routingMode") as? String ?: "blacklist"
+        @Suppress("UNCHECKED_CAST")
+        pendingRoutingPackages = args?.get("routingPackages") as? List<String> ?: emptyList()
         // Check VPN permission first
         val intent = VpnService.prepare(this)
         if (intent != null) {
@@ -87,11 +97,34 @@ class MainActivity : FlutterActivity() {
 
     private fun startTunAndReply(result: MethodChannel.Result) {
         try {
-            val fd = vpnService!!.startTun(pendingSshHost)
+            val fd = vpnService!!.startTun(pendingSshHost, pendingRoutingMode, pendingRoutingPackages)
             result.success(fd)
         } catch (e: Exception) {
             result.error("TUN_ERROR", e.message, null)
         }
+    }
+
+    private fun handleGetInstalledApps(result: MethodChannel.Result) {
+        Thread {
+            val pm = packageManager
+            val apps = pm.getInstalledApplications(PackageManager.GET_META_DATA)
+                .map { info ->
+                    val label = pm.getApplicationLabel(info).toString()
+                    val icon = try {
+                        val drawable = pm.getApplicationIcon(info.packageName)
+                        val bmp = Bitmap.createBitmap(48, 48, Bitmap.Config.ARGB_8888)
+                        val canvas = Canvas(bmp)
+                        drawable.setBounds(0, 0, 48, 48)
+                        drawable.draw(canvas)
+                        val out = ByteArrayOutputStream()
+                        bmp.compress(Bitmap.CompressFormat.PNG, 100, out)
+                        out.toByteArray()
+                    } catch (_: Exception) { null }
+                    mapOf("packageName" to info.packageName, "label" to label, "icon" to icon)
+                }
+                .sortedBy { it["label"] as String }
+            runOnUiThread { result.success(apps) }
+        }.start()
     }
 
     private fun handleStopVpn(result: MethodChannel.Result) {

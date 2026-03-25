@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import '../models/app_routing_config.dart';
 import '../models/server_config.dart';
 import 'ssh_tunnel.dart';
 import 'tun2socks_bindings.dart';
@@ -22,15 +23,17 @@ class VpnController {
   bool _tun2socksRunning = false;
 
   ServerConfig? _lastConfig;
+  AppRoutingConfig? _lastRouting;
   bool _userDisconnected = false;
   int _retryCount = 0;
   Timer? _retryTimer;
 
-  Future<void> connect(ServerConfig config) async {
+  Future<void> connect(ServerConfig config, {AppRoutingConfig? routing}) async {
     if (status.value != VpnStatus.disconnected &&
         status.value != VpnStatus.reconnecting) return;
 
     _lastConfig = config;
+    _lastRouting = routing;
     _userDisconnected = false;
     status.value = VpnStatus.connecting;
     errorMessage.value = null;
@@ -40,7 +43,11 @@ class VpnController {
       await _tunnel!.start();
 
       if (!Platform.isMacOS) {
-        _tunFd = await _channel.invokeMethod<int>('startVpn', {'sshHost': config.host});
+        _tunFd = await _channel.invokeMethod<int>('startVpn', {
+          'sshHost': config.host,
+          'routingMode': routing?.mode.name ?? 'blacklist',
+          'routingPackages': routing?.packages ?? [],
+        });
         if (_tunFd == null || _tunFd! <= 0) {
           throw Exception('Failed to create TUN interface (fd=$_tunFd)');
         }
@@ -93,7 +100,7 @@ class VpnController {
       if (_userDisconnected || _lastConfig == null) return;
       _retryCount++;
       await _cleanupTunnel();
-      await connect(_lastConfig!);
+      await connect(_lastConfig!, routing: _lastRouting);
     });
   }
 
