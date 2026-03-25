@@ -45,6 +45,7 @@ build_abi() {
   GOARCH="$goarch" \
   CGO_ENABLED=1 \
   CC="$clang" \
+  CGO_LDFLAGS="-llog" \
     go build \
       -buildmode=c-shared \
       -trimpath \
