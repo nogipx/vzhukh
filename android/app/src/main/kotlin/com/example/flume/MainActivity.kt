@@ -95,12 +95,11 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun handleStopVpn(result: MethodChannel.Result) {
-        vpnService?.stopTun()
+        (vpnService ?: FlumeVpnService.instance)?.shutdown()
         try {
             unbindService(serviceConnection)
         } catch (_: Exception) {}
         vpnService = null
-        stopService(Intent(this, FlumeVpnService::class.java))
         result.success(null)
     }
 }

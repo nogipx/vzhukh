@@ -37,8 +37,8 @@ class FlumeVpnService : VpnService() {
     }
 
     override fun onDestroy() {
-        instance = null
         stopTun()
+        instance = null
         super.onDestroy()
     }
 
@@ -48,7 +48,7 @@ class FlumeVpnService : VpnService() {
             return START_NOT_STICKY
         }
         startForeground(NOTIFICATION_ID, buildNotification())
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     fun startTun(excludeIp: String): Int {
@@ -115,6 +115,13 @@ class FlumeVpnService : VpnService() {
             tunPfd?.close()
         } catch (_: Exception) {}
         tunPfd = null
+    }
+
+    fun shutdown() {
+        stopTun()
+        @Suppress("DEPRECATION")
+        stopForeground(true)
+        stopSelf()
     }
 
     private fun createNotificationChannel() {

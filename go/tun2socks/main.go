@@ -58,6 +58,7 @@ func logDbg(format string, args ...any) {
 var (
 	mu        sync.Mutex
 	cancelFn  context.CancelFunc
+	tunDev    tun.Tun
 	stack     tun.Stack
 	running   bool
 )
@@ -106,18 +107,19 @@ func tun2socks_start(tunFd C.int, socksAddr *C.char) C.int {
 		MTU:          1500,
 	}
 
-	tunDev, err := tun.New(tunOpts)
+	dev, err := tun.New(tunOpts)
 	if err != nil {
 		cancel()
 		logErr("tun2socks: tun.New: %v", err)
 		return 4
 	}
+	tunDev = dev
 
 	handler := &socksHandler{dialer: dialer}
 
 	stack, err = tun.NewStack("gvisor", tun.StackOptions{
 		Context:    ctx,
-		Tun:        tunDev,
+		Tun:        dev,
 		TunOptions: tunOpts,
 		Handler:    handler,
 		Logger:     &stackLogger{},
@@ -125,14 +127,16 @@ func tun2socks_start(tunFd C.int, socksAddr *C.char) C.int {
 	})
 	if err != nil {
 		cancel()
-		tunDev.Close()
+		dev.Close()
+		tunDev = nil
 		logErr("tun2socks: NewStack: %v", err)
 		return 5
 	}
 
 	if err = stack.Start(); err != nil {
 		cancel()
-		tunDev.Close()
+		dev.Close()
+		tunDev = nil
 		logErr("tun2socks: stack.Start: %v", err)
 		return 6
 	}
@@ -159,6 +163,10 @@ func tun2socks_stop() {
 	if stack != nil {
 		stack.Close()
 		stack = nil
+	}
+	if tunDev != nil {
+		tunDev.Close()
+		tunDev = nil
 	}
 	running = false
 }
