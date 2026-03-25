@@ -56,8 +56,8 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _toggle() async {
-    if (_vpn.status.value != VpnStatus.disconnected &&
-        _vpn.status.value != VpnStatus.error) {
+    if (_vpn.status.value == VpnStatus.connected ||
+        _vpn.status.value == VpnStatus.reconnecting) {
       await _vpn.disconnect();
       return;
     }
@@ -177,7 +177,8 @@ class _HomeScreenState extends State<HomeScreen> {
               ValueListenableBuilder(
                 valueListenable: _vpn.status,
                 builder: (context, status, _) {
-                  final isConnecting = status == VpnStatus.connecting;
+                  final isConnecting = status == VpnStatus.connecting ||
+                      status == VpnStatus.reconnecting;
                   final isConnected = status == VpnStatus.connected;
                   return FilledButton.icon(
                     onPressed: isConnecting ? null : _toggle,
@@ -193,9 +194,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         : Icon(isConnected ? Icons.stop : Icons.play_arrow),
                     label: Text(isConnected
                         ? 'Disconnect'
-                        : isConnecting
-                            ? 'Connecting…'
-                            : 'Connect'),
+                        : status == VpnStatus.reconnecting
+                            ? 'Reconnecting…'
+                            : isConnecting
+                                ? 'Connecting…'
+                                : 'Connect'),
                     style: FilledButton.styleFrom(
                       backgroundColor: isConnected ? Colors.red : null,
                       padding: const EdgeInsets.symmetric(vertical: 16),
@@ -248,6 +251,7 @@ class _StatusCard extends StatelessWidget {
           VpnStatus.disconnected => (Icons.wifi_off, 'Disconnected', Colors.grey),
           VpnStatus.connecting => (Icons.hourglass_top, 'Connecting…', Colors.orange),
           VpnStatus.connected => (Icons.verified_user, 'Connected', Colors.green),
+          VpnStatus.reconnecting => (Icons.sync, 'Reconnecting…', Colors.orange),
           VpnStatus.error => (Icons.error_outline, 'Error', Colors.red),
         };
 

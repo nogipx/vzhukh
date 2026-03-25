@@ -9,12 +9,13 @@ class SshTunnel {
   static const int socksPort = 2080;
 
   final ServerConfig config;
+  final void Function()? onDisconnected;
 
   SSHClient? _client;
   ServerSocket? _socksServer;
   bool _running = false;
 
-  SshTunnel(this.config);
+  SshTunnel(this.config, {this.onDisconnected});
 
   bool get isRunning => _running;
 
@@ -54,7 +55,10 @@ class SshTunnel {
     _socksServer?.listen(
       _handleSocksClient,
       onError: (_) {},
-      onDone: () => _running = false,
+      onDone: () {
+        _running = false;
+        onDisconnected?.call();
+      },
     );
   }
 
