@@ -6,6 +6,8 @@
 
 ---
 
+![вхух](https://external-content.duckduckgo.com/iu/?u=https%3A%2F%2Fwww.meme-arsenal.com%2Fmemes%2F616aec7ad48229b5995e1b49e69ecdbe.jpg&f=1&nofb=1&ipt=a65efe7d042ac71fad12270f7647248cc358883a3045d1f61526f08701f5bbe1?w=200&h=200)
+
 ## Что это?
 
 Приложение, которое туннелирует весь Android-трафик через SSH. Без подписок, без политик конфиденциальности на 40 страниц, без серверов в стране, которую ты не найдёшь на карте.
