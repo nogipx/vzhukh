@@ -24,9 +24,6 @@ class _HomeScreenState extends State<HomeScreen> {
 
   bool _useKey = false;
   bool _obscurePass = true;
-  bool _useWebSocket = false;
-  bool _skipTlsVerify = false;
-  final _wsUrlCtrl = TextEditingController();
   AppRoutingConfig _routing = const AppRoutingConfig.empty();
 
   final _vpn = VpnController();
@@ -54,11 +51,6 @@ class _HomeScreenState extends State<HomeScreen> {
       } else {
         _passCtrl.text = cfg.password ?? '';
       }
-      setState(() {
-        _useWebSocket = cfg.useWebSocket;
-        _wsUrlCtrl.text = cfg.wsUrl ?? '';
-        _skipTlsVerify = cfg.skipTlsVerify;
-      });
     } catch (_) {}
 
     try {
@@ -111,9 +103,6 @@ class _HomeScreenState extends State<HomeScreen> {
       username: _userCtrl.text.trim(),
       password: _useKey ? null : _passCtrl.text,
       privateKey: _useKey ? _keyCtrl.text : null,
-      useWebSocket: _useWebSocket,
-      wsUrl: _useWebSocket ? _wsUrlCtrl.text.trim() : null,
-      skipTlsVerify: _useWebSocket && _skipTlsVerify,
     );
     await _saveConfig(cfg);
     await _vpn.connect(cfg, routing: _routing);
@@ -129,7 +118,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Flume'),
+        title: const Text('Vzhukh'),
         centerTitle: true,
       ),
       body: SingleChildScrollView(
@@ -168,34 +157,6 @@ class _HomeScreenState extends State<HomeScreen> {
                 validator: (v) =>
                     v == null || v.trim().isEmpty ? 'Required' : null,
               ),
-              const SizedBox(height: 8),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('WebSocket transport'),
-                subtitle: const Text('Bypass firewalls via wss://'),
-                value: _useWebSocket,
-                onChanged: (v) => setState(() => _useWebSocket = v),
-              ),
-              if (_useWebSocket) ...[
-                const SizedBox(height: 8),
-                _field(
-                  controller: _wsUrlCtrl,
-                  label: 'WebSocket URL',
-                  hint: 'wss://example.com/tunnel',
-                  validator: (v) => _useWebSocket && (v == null || v.trim().isEmpty)
-                      ? 'Required'
-                      : null,
-                ),
-                const SizedBox(height: 4),
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('Skip TLS verification'),
-                  subtitle: const Text('For self-signed certificates'),
-                  value: _skipTlsVerify,
-                  onChanged: (v) => setState(() => _skipTlsVerify = v ?? false),
-                  controlAffinity: ListTileControlAffinity.leading,
-                ),
-              ],
               const SizedBox(height: 16),
               Row(
                 children: [

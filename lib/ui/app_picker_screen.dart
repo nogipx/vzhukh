@@ -14,7 +14,7 @@ class AppPickerScreen extends StatefulWidget {
 }
 
 class _AppPickerScreenState extends State<AppPickerScreen> {
-  static const _channel = MethodChannel('com.example.flume/vpn');
+  static const _channel = MethodChannel('dev.nogipx.vzhukh/vpn');
 
   List<AppInfo> _apps = [];
   bool _loading = true;

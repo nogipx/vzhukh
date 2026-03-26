@@ -1,4 +1,4 @@
-module github.com/nogipx/flume/tun2socks
+module github.com/nogipx/vzhukh/tun2socks
 
 go 1.25.0
 

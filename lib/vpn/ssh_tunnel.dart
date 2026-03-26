@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 import 'package:dartssh2/dartssh2.dart';
 import '../models/server_config.dart';
-import 'websocket_ssh_socket.dart';
 
 /// Opens an SSH connection and runs a SOCKS5 proxy on localhost:2080.
 /// This is the Dart equivalent of `ssh -D 2080 user@host`.
@@ -23,15 +22,7 @@ class SshTunnel {
   Future<void> start() async {
     if (_running) return;
 
-    final SSHSocket socket;
-    if (config.useWebSocket && config.wsUrl != null) {
-      socket = await WebSocketSSHSocket.connect(
-        Uri.parse(config.wsUrl!),
-        skipTlsVerify: config.skipTlsVerify,
-      );
-    } else {
-      socket = await SSHSocket.connect(config.host, config.port);
-    }
+    final socket = await SSHSocket.connect(config.host, config.port);
 
     _client = SSHClient(
       socket,

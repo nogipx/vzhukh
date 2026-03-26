@@ -1,4 +1,4 @@
-// Flume tun2socks — routes TUN packets through a SOCKS5 proxy.
+// Vzhukh tun2socks — routes TUN packets through a SOCKS5 proxy.
 // Uses sagernet/sing-tun with "system" stack (no gVisor, Android-compatible).
 //
 // Compiled as a shared library (.so) for Android via:

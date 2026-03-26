@@ -1,4 +1,4 @@
-package com.example.flume
+package dev.nogipx.vzhukh
 
 import android.content.ComponentName
 import android.content.Context
@@ -17,17 +17,17 @@ import java.io.ByteArrayOutputStream
 class MainActivity : FlutterActivity() {
 
     companion object {
-        const val CHANNEL = "com.example.flume/vpn"
+        const val CHANNEL = "dev.nogipx.vzhukh/vpn"
         const val VPN_REQUEST_CODE = 1001
     }
 
     private var channel: MethodChannel? = null
     private var pendingResult: MethodChannel.Result? = null
-    private var vpnService: FlumeVpnService? = null
+    private var vpnService: VzhukhVpnService? = null
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-            vpnService = (binder as FlumeVpnService.LocalBinder).getService()
+            vpnService = (binder as VzhukhVpnService.LocalBinder).getService()
             pendingResult?.let { result ->
                 pendingResult = null
                 startTunAndReply(result)
@@ -84,7 +84,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun doBindAndStart(result: MethodChannel.Result) {
-        val serviceIntent = Intent(this, FlumeVpnService::class.java)
+        val serviceIntent = Intent(this, VzhukhVpnService::class.java)
         startService(serviceIntent)
 
         if (vpnService != null) {
@@ -128,7 +128,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun handleStopVpn(result: MethodChannel.Result) {
-        (vpnService ?: FlumeVpnService.instance)?.shutdown()
+        (vpnService ?: VzhukhVpnService.instance)?.shutdown()
         try {
             unbindService(serviceConnection)
         } catch (_: Exception) {}

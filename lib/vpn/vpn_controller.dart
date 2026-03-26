@@ -10,7 +10,7 @@ import 'tun2socks_bindings.dart';
 enum VpnStatus { disconnected, connecting, connected, reconnecting, error }
 
 class VpnController {
-  static const _channel = MethodChannel('com.example.flume/vpn');
+  static const _channel = MethodChannel('dev.nogipx.vzhukh/vpn');
 
   static const _maxRetryDelay = Duration(seconds: 30);
 

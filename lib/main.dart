@@ -3,16 +3,16 @@ import 'ui/home_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  runApp(const FlumeApp());
+  runApp(const VzhukhApp());
 }
 
-class FlumeApp extends StatelessWidget {
-  const FlumeApp({super.key});
+class VzhukhApp extends StatelessWidget {
+  const VzhukhApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flume',
+      title: 'Vzhukh',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(

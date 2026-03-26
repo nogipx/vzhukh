@@ -1,4 +1,4 @@
-package com.example.flume
+package dev.nogipx.vzhukh
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -11,18 +11,18 @@ import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import androidx.core.app.NotificationCompat
 
-class FlumeVpnService : VpnService() {
+class VzhukhVpnService : VpnService() {
 
     companion object {
-        const val CHANNEL_ID = "flume_vpn"
+        const val CHANNEL_ID = "vzhukh_vpn"
         const val NOTIFICATION_ID = 1
-        const val ACTION_STOP = "com.example.flume.STOP"
+        const val ACTION_STOP = "dev.nogipx.vzhukh.STOP"
 
-        var instance: FlumeVpnService? = null
+        var instance: VzhukhVpnService? = null
     }
 
     inner class LocalBinder : Binder() {
-        fun getService() = this@FlumeVpnService
+        fun getService() = this@VzhukhVpnService
     }
 
     private val binder = LocalBinder()
@@ -59,7 +59,7 @@ class FlumeVpnService : VpnService() {
         stopTun()
 
         val builder = Builder()
-            .setSession("Flume")
+            .setSession("Vzhukh")
             .addAddress("10.0.0.2", 32)
             .addDnsServer("8.8.8.8")
             .addDnsServer("8.8.4.4")
@@ -138,7 +138,7 @@ class FlumeVpnService : VpnService() {
     private fun createNotificationChannel() {
         val channel = NotificationChannel(
             CHANNEL_ID,
-            "Flume VPN",
+            "Vzhukh VPN",
             NotificationManager.IMPORTANCE_LOW,
         ).apply {
             description = "SSH tunnel active"
@@ -150,7 +150,7 @@ class FlumeVpnService : VpnService() {
     private fun buildNotification(): Notification {
         val stopIntent = PendingIntent.getService(
             this, 0,
-            Intent(this, FlumeVpnService::class.java).apply { action = ACTION_STOP },
+            Intent(this, VzhukhVpnService::class.java).apply { action = ACTION_STOP },
             PendingIntent.FLAG_IMMUTABLE,
         )
         val openIntent = PendingIntent.getActivity(
@@ -159,7 +159,7 @@ class FlumeVpnService : VpnService() {
             PendingIntent.FLAG_IMMUTABLE,
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("Flume VPN")
+            .setContentTitle("Vzhukh VPN")
             .setContentText("SSH tunnel active")
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentIntent(openIntent)
