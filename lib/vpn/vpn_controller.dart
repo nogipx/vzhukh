@@ -30,7 +30,9 @@ class VpnController {
 
   Future<void> connect(ServerConfig config, {AppRoutingConfig? routing}) async {
     if (status.value != VpnStatus.disconnected &&
-        status.value != VpnStatus.reconnecting) return;
+        status.value != VpnStatus.reconnecting) {
+      return;
+    }
 
     _lastConfig = config;
     _lastRouting = routing;

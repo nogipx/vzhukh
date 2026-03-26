@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/app_routing_config.dart';
 import '../models/server_config.dart';
 import '../vpn/vpn_controller.dart';
@@ -26,6 +26,7 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _obscurePass = true;
   AppRoutingConfig _routing = const AppRoutingConfig.empty();
 
+  final _storage = const FlutterSecureStorage();
   final _vpn = VpnController();
 
   @override
@@ -35,44 +36,42 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadConfig() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString('server_config');
-    if (raw == null) return;
-    try {
-      final cfg = ServerConfig.fromJson(
-        Map<String, dynamic>.from(jsonDecode(raw) as Map),
-      );
-      _hostCtrl.text = cfg.host;
-      _portCtrl.text = cfg.port.toString();
-      _userCtrl.text = cfg.username;
-      if (cfg.privateKey != null) {
-        _keyCtrl.text = cfg.privateKey!;
-        setState(() => _useKey = true);
-      } else {
-        _passCtrl.text = cfg.password ?? '';
-      }
-    } catch (_) {}
+    final raw = await _storage.read(key: 'server_config');
+    if (raw != null) {
+      try {
+        final cfg = ServerConfig.fromJson(
+          Map<String, dynamic>.from(jsonDecode(raw) as Map),
+        );
+        _hostCtrl.text = cfg.host;
+        _portCtrl.text = cfg.port.toString();
+        _userCtrl.text = cfg.username;
+        if (cfg.privateKey != null) {
+          _keyCtrl.text = cfg.privateKey!;
+          setState(() => _useKey = true);
+        } else {
+          _passCtrl.text = cfg.password ?? '';
+        }
+      } catch (_) {}
+    }
 
-    try {
-      final rawRouting = prefs.getString('app_routing');
-      if (rawRouting != null) {
+    final rawRouting = await _storage.read(key: 'app_routing');
+    if (rawRouting != null) {
+      try {
         setState(() {
           _routing = AppRoutingConfig.fromJson(
             Map<String, dynamic>.from(jsonDecode(rawRouting) as Map),
           );
         });
-      }
-    } catch (_) {}
+      } catch (_) {}
+    }
   }
 
   Future<void> _saveConfig(ServerConfig cfg) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('server_config', jsonEncode(cfg.toJson()));
+    await _storage.write(key: 'server_config', value: jsonEncode(cfg.toJson()));
   }
 
   Future<void> _saveRouting(AppRoutingConfig routing) async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('app_routing', jsonEncode(routing.toJson()));
+    await _storage.write(key: 'app_routing', value: jsonEncode(routing.toJson()));
   }
 
   Future<void> _openAppPicker() async {
