@@ -5,12 +5,21 @@ class ServerConfig {
   final String? password;
   final String? privateKey;
 
+  /// If true, SSH connects via WebSocket instead of raw TCP.
+  /// [wsUrl] must be set, e.g. "wss://example.com/tunnel".
+  final bool useWebSocket;
+  final String? wsUrl;
+  final bool skipTlsVerify;
+
   const ServerConfig({
     required this.host,
     required this.port,
     required this.username,
     this.password,
     this.privateKey,
+    this.useWebSocket = false,
+    this.wsUrl,
+    this.skipTlsVerify = false,
   });
 
   bool get isValid =>
@@ -27,6 +36,9 @@ class ServerConfig {
         'username': username,
         'password': password,
         'privateKey': privateKey,
+        'useWebSocket': useWebSocket,
+        'wsUrl': wsUrl,
+        'skipTlsVerify': skipTlsVerify,
       };
 
   factory ServerConfig.fromJson(Map<String, dynamic> json) => ServerConfig(
@@ -35,5 +47,8 @@ class ServerConfig {
         username: json['username'] as String,
         password: json['password'] as String?,
         privateKey: json['privateKey'] as String?,
+        useWebSocket: json['useWebSocket'] as bool? ?? false,
+        wsUrl: json['wsUrl'] as String?,
+        skipTlsVerify: json['skipTlsVerify'] as bool? ?? false,
       );
 }
