@@ -60,7 +60,7 @@ class _AddServerScreenState extends State<AddServerScreen> {
 
     try {
       await _repo.saveServer(server);
-      // Admin identity is not persisted — password is used only once.
+      // Admin password is used only once and never stored.
       await ProvisionServer(_repo)(server, adminIdentity);
 
       if (mounted) Navigator.pop(context);

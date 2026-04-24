@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../models/app_routing_config.dart';
+import '../models/connection.dart';
 import '../models/server.dart';
 import '../models/ssh_identity.dart';
 import 'ssh_tunnel.dart';
@@ -24,26 +25,34 @@ class VpnController {
   bool _tun2socksRunning = false;
 
   Server? _lastServer;
-  SshIdentity? _lastIdentity;
+  Connection? _lastConnection;
   AppRoutingConfig? _lastRouting;
   bool _userDisconnected = false;
   int _retryCount = 0;
   Timer? _retryTimer;
 
-  Future<void> connect(Server server, SshIdentity identity, {AppRoutingConfig? routing}) async {
+  Future<void> connect(Server server, Connection connection, {AppRoutingConfig? routing}) async {
     if (status.value != VpnStatus.disconnected &&
         status.value != VpnStatus.reconnecting) {
       return;
     }
 
     _lastServer = server;
-    _lastIdentity = identity;
+    _lastConnection = connection;
     _lastRouting = routing;
     _userDisconnected = false;
     status.value = VpnStatus.connecting;
     errorMessage.value = null;
 
     try {
+      final identity = SshIdentity(
+        id: connection.id,
+        serverId: connection.serverId,
+        username: 'flume',
+        authType: SshAuthType.privateKey,
+        isAdmin: false,
+        privateKeyPem: connection.privateKeyPem,
+      );
       _tunnel = SshTunnel(server, identity, onDisconnected: _onTunnelDisconnected);
       await _tunnel!.start();
 
@@ -102,10 +111,10 @@ class VpnController {
     errorMessage.value = null;
 
     _retryTimer = Timer(delay, () async {
-      if (_userDisconnected || _lastServer == null || _lastIdentity == null) return;
+      if (_userDisconnected || _lastServer == null || _lastConnection == null) return;
       _retryCount++;
       await _cleanupTunnel();
-      await connect(_lastServer!, _lastIdentity!, routing: _lastRouting);
+      await connect(_lastServer!, _lastConnection!, routing: _lastRouting);
     });
   }
 

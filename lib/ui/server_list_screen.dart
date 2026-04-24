@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/server.dart';
 import '../storage/server_repository.dart';
 import 'add_server_screen.dart';
+import 'import_invite_screen.dart';
 import 'server_detail_screen.dart';
 
 class ServerListScreen extends StatefulWidget {
@@ -72,6 +73,19 @@ class _ServerListScreenState extends State<ServerListScreen> {
       appBar: AppBar(
         title: const Text('Flume'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.qr_code_scanner),
+            tooltip: 'Import invite',
+            onPressed: () async {
+              final imported = await Navigator.push<bool>(
+                context,
+                MaterialPageRoute(builder: (_) => const ImportInviteScreen()),
+              );
+              if (imported == true) await _load();
+            },
+          ),
+        ],
       ),
       body: _servers.isEmpty
           ? const Center(

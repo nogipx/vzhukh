@@ -15,6 +15,9 @@ dependencies:
   ffi: ^2.2.0
   flutter_secure_storage: ^10.0.0
   pinenacl: ^0.6.0
+  pointycastle: ^4.0.0
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^5.0.0
 
 dev_dependencies:
   flutter_test:

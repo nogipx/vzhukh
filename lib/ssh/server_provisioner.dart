@@ -1,5 +1,6 @@
 import 'package:dartssh2/dartssh2.dart';
 
+import '../models/connection.dart';
 import '../models/server.dart';
 import '../models/ssh_identity.dart';
 import '../storage/server_repository.dart';
@@ -7,32 +8,20 @@ import 'key_generator.dart';
 
 const _tunnelUsername = 'flume';
 
-class ProvisionResult {
-  final SshIdentity tunnelIdentity;
-  final String publicKeyOpenSSH;
-
-  const ProvisionResult({
-    required this.tunnelIdentity,
-    required this.publicKeyOpenSSH,
-  });
-}
-
 /// Connects to [server] using [adminIdentity] (password auth),
-/// creates the 'flume' system user, installs a generated Ed25519 key,
-/// saves the tunnel identity to [repository], and returns it.
+/// creates the 'flume' system user, installs the owner's Ed25519 key
+/// with restrict,port-forwarding, saves the [Connection] to [repository].
 ///
-/// Throws if SSH connection or any remote command fails.
+/// Returns the [Connection] including the private key so the caller
+/// can connect immediately (and optionally export it as an invite).
 class ProvisionServer {
   final ServerRepository repository;
   final GenerateSshKeyPair _generateKey;
 
   ProvisionServer(this.repository) : _generateKey = const GenerateSshKeyPair();
 
-  Future<ProvisionResult> call(Server server, SshIdentity adminIdentity) async {
-    assert(!adminIdentity.isAdmin == false, 'adminIdentity must have isAdmin=true');
-    assert(adminIdentity.serverId == server.id);
-
-    final keyPair = _generateKey();
+  Future<Connection> call(Server server, SshIdentity adminIdentity) async {
+    final keyPair = _generateKey(comment: 'owner');
 
     final socket = await SSHSocket.connect(server.host, server.port);
     final client = SSHClient(
@@ -54,32 +43,33 @@ class ProvisionServer {
       await socket.done;
     }
 
-    final tunnelIdentity = SshIdentity(
-      id: '${server.id}_tunnel',
+    // Owner connection stores the private key so they can connect from this device.
+    final connection = Connection(
+      id: '${server.id}_owner',
       serverId: server.id,
-      username: _tunnelUsername,
-      authType: SshAuthType.privateKey,
-      isAdmin: false,
+      label: 'Owner',
+      publicKeyOpenSSH: keyPair.publicKeyOpenSSH,
       privateKeyPem: keyPair.privateKeyPem,
-      publicKeyOpenSSH: keyPair.publicKeyOpenSSH,
+      createdAt: DateTime.now(),
     );
 
-    await repository.saveIdentity(tunnelIdentity);
-
-    return ProvisionResult(
-      tunnelIdentity: tunnelIdentity,
-      publicKeyOpenSSH: keyPair.publicKeyOpenSSH,
-    );
+    await repository.saveConnection(connection);
+    return connection;
   }
 
   Future<void> _runSetupCommands(SSHClient client, String pubkey) async {
     // Create the user if it doesn't exist; -s /bin/false = no interactive login.
-    await _exec(client, 'id $_tunnelUsername || useradd -m -s /bin/false $_tunnelUsername');
+    await _exec(
+      client,
+      'id $_tunnelUsername || useradd -m -s /bin/false $_tunnelUsername',
+    );
 
-    // Set up .ssh directory and authorized_keys.
+    // restrict,port-forwarding: no shell, no X11, no agent — only port forwarding.
+    final restrictedEntry = 'restrict,port-forwarding $pubkey';
+
     await _exec(client, [
       'mkdir -p /home/$_tunnelUsername/.ssh',
-      'echo ${_shellQuote(pubkey)} > /home/$_tunnelUsername/.ssh/authorized_keys',
+      'echo ${_shellQuote(restrictedEntry)} > /home/$_tunnelUsername/.ssh/authorized_keys',
       'chmod 700 /home/$_tunnelUsername/.ssh',
       'chmod 600 /home/$_tunnelUsername/.ssh/authorized_keys',
       'chown -R $_tunnelUsername:$_tunnelUsername /home/$_tunnelUsername/.ssh',
@@ -95,6 +85,5 @@ class ProvisionServer {
     }
   }
 
-  /// Wraps a string in single quotes, escaping any single quotes inside.
   String _shellQuote(String s) => "'${s.replaceAll("'", "'\\''")}'";
 }

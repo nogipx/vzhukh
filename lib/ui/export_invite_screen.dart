@@ -1,0 +1,130 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:qr_flutter/qr_flutter.dart';
+
+import '../models/connection.dart';
+import '../models/server.dart';
+import '../ssh/invite_codec.dart';
+
+class ExportInviteScreen extends StatefulWidget {
+  final Server server;
+  final Connection connection;
+
+  const ExportInviteScreen({
+    super.key,
+    required this.server,
+    required this.connection,
+  });
+
+  @override
+  State<ExportInviteScreen> createState() => _ExportInviteScreenState();
+}
+
+class _ExportInviteScreenState extends State<ExportInviteScreen> {
+  final _passwordCtrl = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+  bool _obscurePass = true;
+  String? _encoded;
+  String? _error;
+
+  final _codec = const InviteCodec();
+
+  @override
+  void dispose() {
+    _passwordCtrl.dispose();
+    super.dispose();
+  }
+
+  void _generate() {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _error = null);
+
+    try {
+      final payload = InvitePayload(
+        host: widget.server.host,
+        port: widget.server.port,
+        nickname: widget.server.nickname,
+        username: 'flume',
+        privateKeyPem: widget.connection.privateKeyPem!,
+      );
+      final encoded = _codec.encode(payload, _passwordCtrl.text);
+      setState(() => _encoded = encoded);
+    } catch (e) {
+      setState(() => _error = e.toString());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text('Export: ${widget.connection.label}')),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Set a password to encrypt the invite. Share the QR code and the password separately (e.g. QR via messenger, password in person).',
+              style: TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 24),
+            Form(
+              key: _formKey,
+              child: TextFormField(
+                controller: _passwordCtrl,
+                obscureText: _obscurePass,
+                decoration: InputDecoration(
+                  labelText: 'Invite password',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: Icon(
+                        _obscurePass ? Icons.visibility : Icons.visibility_off),
+                    onPressed: () =>
+                        setState(() => _obscurePass = !_obscurePass),
+                  ),
+                ),
+                validator: (v) =>
+                    v == null || v.isEmpty ? 'Required' : null,
+              ),
+            ),
+            const SizedBox(height: 16),
+            FilledButton(
+              onPressed: _generate,
+              child: const Text('Generate QR'),
+            ),
+            if (_error != null) ...[
+              const SizedBox(height: 12),
+              Text(_error!, style: const TextStyle(color: Colors.red)),
+            ],
+            if (_encoded != null) ...[
+              const SizedBox(height: 32),
+              Center(
+                child: Container(
+                  color: Colors.white,
+                  padding: const EdgeInsets.all(12),
+                  child: QrImageView(
+                    data: _encoded!,
+                    version: QrVersions.auto,
+                    size: 280,
+                    errorCorrectionLevel: QrErrorCorrectLevel.L,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: () {
+                  Clipboard.setData(ClipboardData(text: _encoded!));
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Copied to clipboard')),
+                  );
+                },
+                icon: const Icon(Icons.copy),
+                label: const Text('Copy invite text'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}

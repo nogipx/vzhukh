@@ -1,13 +1,13 @@
 import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import '../models/connection.dart';
 import '../models/server.dart';
-import '../models/ssh_identity.dart';
 
 class ServerRepository {
   static const _storage = FlutterSecureStorage();
   static const _serversKey = 'servers_v2';
 
-  static String _identitiesKey(String serverId) => 'identities_$serverId';
+  static String _connectionsKey(String serverId) => 'connections_$serverId';
 
   // ---- Servers ----
 
@@ -35,50 +35,48 @@ class ServerRepository {
     final servers = await getServers();
     servers.removeWhere((s) => s.id == serverId);
     await _storage.write(key: _serversKey, value: jsonEncode(servers.map((s) => s.toJson()).toList()));
-    await _storage.delete(key: _identitiesKey(serverId));
+    await _storage.delete(key: _connectionsKey(serverId));
   }
 
-  // ---- Identities ----
+  // ---- Connections ----
 
-  Future<List<SshIdentity>> getIdentities(String serverId) async {
-    final raw = await _storage.read(key: _identitiesKey(serverId));
+  Future<List<Connection>> getConnections(String serverId) async {
+    final raw = await _storage.read(key: _connectionsKey(serverId));
     if (raw == null) return [];
     final list = jsonDecode(raw) as List;
     return list
-        .map((e) => SshIdentity.fromJson(Map<String, dynamic>.from(e as Map)))
+        .map((e) => Connection.fromJson(Map<String, dynamic>.from(e as Map)))
         .toList();
   }
 
-  Future<void> saveIdentity(SshIdentity identity) async {
-    final identities = await getIdentities(identity.serverId);
-    final idx = identities.indexWhere((i) => i.id == identity.id);
+  Future<void> saveConnection(Connection connection) async {
+    final connections = await getConnections(connection.serverId);
+    final idx = connections.indexWhere((c) => c.id == connection.id);
     if (idx >= 0) {
-      identities[idx] = identity;
+      connections[idx] = connection;
     } else {
-      identities.add(identity);
+      connections.add(connection);
     }
     await _storage.write(
-      key: _identitiesKey(identity.serverId),
-      value: jsonEncode(identities.map((i) => i.toJson()).toList()),
+      key: _connectionsKey(connection.serverId),
+      value: jsonEncode(connections.map((c) => c.toJson()).toList()),
     );
   }
 
-  Future<void> deleteIdentity(SshIdentity identity) async {
-    final identities = await getIdentities(identity.serverId);
-    identities.removeWhere((i) => i.id == identity.id);
+  Future<void> deleteConnection(Connection connection) async {
+    final connections = await getConnections(connection.serverId);
+    connections.removeWhere((c) => c.id == connection.id);
     await _storage.write(
-      key: _identitiesKey(identity.serverId),
-      value: jsonEncode(identities.map((i) => i.toJson()).toList()),
+      key: _connectionsKey(connection.serverId),
+      value: jsonEncode(connections.map((c) => c.toJson()).toList()),
     );
   }
 
-  /// Returns the tunnel identity (non-admin, key auth) for a server, if provisioned.
-  Future<SshIdentity?> getTunnelIdentity(String serverId) async {
-    final identities = await getIdentities(serverId);
+  /// Returns the first connection on this device that can connect (has private key).
+  Future<Connection?> getOwnConnection(String serverId) async {
+    final connections = await getConnections(serverId);
     try {
-      return identities.firstWhere(
-        (i) => !i.isAdmin && i.authType == SshAuthType.privateKey,
-      );
+      return connections.firstWhere((c) => c.canConnect);
     } catch (_) {
       return null;
     }
