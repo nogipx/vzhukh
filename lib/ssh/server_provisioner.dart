@@ -7,7 +7,7 @@ import '../storage/server_repository.dart';
 import 'key_generator.dart';
 import 'ssh_client_factory.dart';
 
-const _ownerUsername = 'flume_owner';
+const _ownerUsername = 'vzhukh_owner';
 
 /// Connects to [server] using [adminIdentity] (password auth),
 /// creates the 'flume' system user, installs the owner's Ed25519 key

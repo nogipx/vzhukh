@@ -8,8 +8,8 @@ import 'key_generator.dart';
 import 'ssh_client_factory.dart';
 
 /// Derives a safe Linux username from a human-readable label.
-/// Result is always prefixed with "flume_", max 32 chars total.
-/// Example: "Alice's phone" → "flume_alice_s_phone"
+/// Result is always prefixed with "vzhukh_", max 32 chars total.
+/// Example: "Alice's phone" → "vzhukh_alice_s_phone"
 String usernameFromLabel(String label) {
   final slug = label
       .toLowerCase()
@@ -17,7 +17,7 @@ String usernameFromLabel(String label) {
       .replaceAll(RegExp(r'_+'), '_')
       .replaceAll(RegExp(r'^_+|_+$'), '');
   final part = slug.isEmpty ? 'user' : slug.substring(0, slug.length.clamp(0, 24));
-  return 'flume_$part';
+  return 'vzhukh_$part';
 }
 
 /// Generates a key pair, creates a dedicated Linux user for [label],
