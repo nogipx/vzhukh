@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/server.dart';
 import '../models/ssh_identity.dart';
 import '../ssh/server_provisioner.dart';
@@ -130,11 +131,25 @@ class _AddServerScreenState extends State<AddServerScreen> {
                 controller: _passCtrl,
                 label: 'Admin password',
                 obscureText: _obscurePass,
-                suffixIcon: IconButton(
-                  icon: Icon(
-                      _obscurePass ? Icons.visibility : Icons.visibility_off),
-                  onPressed: () =>
-                      setState(() => _obscurePass = !_obscurePass),
+                suffixIcon: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.content_paste),
+                      tooltip: 'Paste',
+                      onPressed: () async {
+                        final data = await Clipboard.getData(Clipboard.kTextPlain);
+                        if (data?.text != null) _passCtrl.text = data!.text!;
+                      },
+                    ),
+                    IconButton(
+                      icon: Icon(_obscurePass
+                          ? Icons.visibility
+                          : Icons.visibility_off),
+                      onPressed: () =>
+                          setState(() => _obscurePass = !_obscurePass),
+                    ),
+                  ],
                 ),
                 validator: (v) =>
                     v == null || v.isEmpty ? 'Required' : null,

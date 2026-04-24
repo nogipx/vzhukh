@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/app_routing_config.dart';
@@ -201,12 +202,25 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
                       obscureText: obscure,
                       decoration: InputDecoration(
                         labelText: 'Admin password',
-                        suffixIcon: IconButton(
-                          icon: Icon(obscure
-                              ? Icons.visibility
-                              : Icons.visibility_off),
-                          onPressed: () =>
-                              setDialogState(() => obscure = !obscure),
+                        suffixIcon: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const Icon(Icons.content_paste),
+                              tooltip: 'Paste',
+                              onPressed: () async {
+                                final data = await Clipboard.getData(Clipboard.kTextPlain);
+                                if (data?.text != null) passCtrl.text = data!.text!;
+                              },
+                            ),
+                            IconButton(
+                              icon: Icon(obscure
+                                  ? Icons.visibility
+                                  : Icons.visibility_off),
+                              onPressed: () =>
+                                  setDialogState(() => obscure = !obscure),
+                            ),
+                          ],
                         ),
                       ),
                       validator: (v) =>
@@ -370,11 +384,25 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
                   obscureText: obscure,
                   decoration: InputDecoration(
                     labelText: 'Admin password',
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                          obscure ? Icons.visibility : Icons.visibility_off),
-                      onPressed: () =>
-                          setDialogState(() => obscure = !obscure),
+                    suffixIcon: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          icon: const Icon(Icons.content_paste),
+                          tooltip: 'Paste',
+                          onPressed: () async {
+                            final data = await Clipboard.getData(Clipboard.kTextPlain);
+                            if (data?.text != null) passCtrl.text = data!.text!;
+                          },
+                        ),
+                        IconButton(
+                          icon: Icon(obscure
+                              ? Icons.visibility
+                              : Icons.visibility_off),
+                          onPressed: () =>
+                              setDialogState(() => obscure = !obscure),
+                        ),
+                      ],
                     ),
                   ),
                   validator: (v) =>
