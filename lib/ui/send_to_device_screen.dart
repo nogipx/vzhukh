@@ -9,9 +9,24 @@ import '../ssh/route_invite_codec.dart';
 import '../storage/server_repository.dart';
 
 class SendToDeviceScreen extends StatefulWidget {
-  final TunnelRoute route;
+  final TunnelRoute? _route;
+  final String? _preEncodedType;
+  final String? _preEncoded;
 
-  const SendToDeviceScreen({super.key, required this.route});
+  /// Send a route: builds hop data and encrypts with a password.
+  const SendToDeviceScreen.route({super.key, required TunnelRoute route})
+      : _route = route,
+        _preEncodedType = null,
+        _preEncoded = null;
+
+  /// Send an already-encrypted payload (e.g. invite generated in export screen).
+  const SendToDeviceScreen.encoded({
+    super.key,
+    required String type,
+    required String encoded,
+  })  : _route = null,
+        _preEncodedType = type,
+        _preEncoded = encoded;
 
   @override
   State<SendToDeviceScreen> createState() => _SendToDeviceScreenState();
@@ -27,6 +42,12 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
   bool _sending = false;
   String? _error;
   _ScannedTarget? _target;
+
+  bool get _needsPassword => widget._route != null;
+
+  String get _title => widget._route != null
+      ? 'Send: ${widget._route!.label}'
+      : 'Send to device';
 
   @override
   void dispose() {
@@ -49,7 +70,7 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
 
   Future<List<RouteHopData>> _buildHopData() async {
     final hops = <RouteHopData>[];
-    for (final hop in widget.route.hops) {
+    for (final hop in widget._route!.hops) {
       final servers = await _repo.getServers();
       final server = servers.firstWhere(
         (s) => s.id == hop.serverId,
@@ -78,7 +99,7 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
   }
 
   Future<void> _send() async {
-    if (!_formKey.currentState!.validate()) return;
+    if (_needsPassword && !_formKey.currentState!.validate()) return;
     final target = _target!;
 
     setState(() {
@@ -87,18 +108,29 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
     });
 
     try {
-      final hopData = await _buildHopData();
-      final payload = RouteInvitePayload(
-        label: widget.route.label,
-        hops: hopData,
-      );
-      final encoded = _codec.encode(payload, _passwordCtrl.text);
+      final String type;
+      final String encoded;
+
+      if (widget._route != null) {
+        final hopData = await _buildHopData();
+        final payload = RouteInvitePayload(
+          label: widget._route!.label,
+          hops: hopData,
+        );
+        encoded = _codec.encode(payload, _passwordCtrl.text);
+        type = 'route';
+      } else {
+        type = widget._preEncodedType!;
+        encoded = widget._preEncoded!;
+      }
+
       await LocalHttpServer.sendTo(
         host: target.ip,
         port: target.port,
-        type: 'route',
+        type: type,
         payload: encoded,
       );
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -118,7 +150,7 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('Send: ${widget.route.label}'),
+        title: Text(_title),
         actions: [
           if (_target != null)
             TextButton(
@@ -177,24 +209,27 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 24),
-            TextFormField(
-              controller: _passwordCtrl,
-              obscureText: _obscurePass,
-              autofocus: true,
-              decoration: InputDecoration(
-                labelText: 'Encryption password',
-                hintText: 'Tell this password to the receiver',
-                border: const OutlineInputBorder(),
-                suffixIcon: IconButton(
-                  icon: Icon(
-                      _obscurePass ? Icons.visibility : Icons.visibility_off),
-                  onPressed: () =>
-                      setState(() => _obscurePass = !_obscurePass),
+            if (_needsPassword) ...[
+              const SizedBox(height: 24),
+              TextFormField(
+                controller: _passwordCtrl,
+                obscureText: _obscurePass,
+                autofocus: true,
+                decoration: InputDecoration(
+                  labelText: 'Encryption password',
+                  hintText: 'Tell this password to the receiver',
+                  border: const OutlineInputBorder(),
+                  suffixIcon: IconButton(
+                    icon: Icon(_obscurePass
+                        ? Icons.visibility
+                        : Icons.visibility_off),
+                    onPressed: () =>
+                        setState(() => _obscurePass = !_obscurePass),
+                  ),
                 ),
+                validator: (v) => v == null || v.isEmpty ? 'Required' : null,
               ),
-              validator: (v) => v == null || v.isEmpty ? 'Required' : null,
-            ),
+            ],
             const SizedBox(height: 24),
             if (_error != null) ...[
               Text(_error!, style: const TextStyle(color: Colors.red)),

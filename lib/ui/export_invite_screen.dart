@@ -4,8 +4,8 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../models/connection.dart';
 import '../models/server.dart';
-import '../network/local_http_server.dart';
 import '../ssh/invite_codec.dart';
+import 'send_to_device_screen.dart';
 
 class ExportInviteScreen extends StatefulWidget {
   final Server server;
@@ -37,52 +37,15 @@ class _ExportInviteScreenState extends State<ExportInviteScreen> {
   }
 
   Future<void> _sendToDevice(String encoded) async {
-    final ipCtrl = TextEditingController();
-    final ip = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Send to device'),
-        content: TextField(
-          controller: ipCtrl,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Device IP address',
-            hintText: '192.168.1.x',
-          ),
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SendToDeviceScreen.encoded(
+          type: 'invite',
+          encoded: encoded,
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              final v = ipCtrl.text.trim();
-              if (v.isNotEmpty) Navigator.pop(ctx, v);
-            },
-            child: const Text('Send'),
-          ),
-        ],
       ),
     );
-    if (ip == null || !mounted) return;
-    try {
-      final parts = ip.split(':');
-      final host = parts[0];
-      final port = parts.length > 1 ? int.parse(parts[1]) : LocalHttpServer.port;
-      await LocalHttpServer.sendTo(host: host, port: port, type: 'invite', payload: encoded);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Sent! Enter the password on the receiving device.')),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
-        );
-      }
-    }
   }
 
   void _generate() {

@@ -169,7 +169,7 @@ class _RouteListScreenState extends State<RouteListScreen> {
                   onSend: () => Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => SendToDeviceScreen(route: route),
+                      builder: (_) => SendToDeviceScreen.route(route: route),
                     ),
                   ),
                 );
