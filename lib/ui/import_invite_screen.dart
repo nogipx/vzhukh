@@ -72,6 +72,7 @@ class _ImportInviteScreenState extends State<ImportInviteScreen> {
         id: '${serverId}_imported',
         serverId: serverId,
         label: 'My connection',
+        username: payload.username,
         publicKeyOpenSSH: _extractPublicKey(payload.privateKeyPem),
         privateKeyPem: payload.privateKeyPem,
         createdAt: DateTime.now(),

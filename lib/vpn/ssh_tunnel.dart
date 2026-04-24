@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:dartssh2/dartssh2.dart';
 import '../models/server.dart';
 import '../models/ssh_identity.dart';
+import '../ssh/ssh_client_factory.dart';
 
 /// Opens an SSH connection and runs a SOCKS5 proxy on localhost:2080.
 /// This is the Dart equivalent of `ssh -D 2080 user@host`.
@@ -26,12 +27,10 @@ class SshTunnel {
 
     final socket = await SSHSocket.connect(server.host, server.port);
 
-    _client = SSHClient(
+    _client = buildSshClient(
       socket,
       username: identity.username,
-      onPasswordRequest: identity.password != null
-          ? () => identity.password!
-          : null,
+      password: identity.password,
       identities: identity.privateKeyPem != null
           ? [...SSHKeyPair.fromPem(identity.privateKeyPem!)]
           : null,

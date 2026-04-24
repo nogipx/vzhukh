@@ -4,8 +4,6 @@ import 'dart:typed_data';
 import 'package:dartssh2/dartssh2.dart';
 import 'package:pinenacl/ed25519.dart' as nacl;
 
-const _tunnelUsername = 'flume';
-
 class SshKeyPairResult {
   final String privateKeyPem;
   final String publicKeyOpenSSH;
@@ -24,7 +22,7 @@ class SshKeyPairResult {
 class GenerateSshKeyPair {
   const GenerateSshKeyPair();
 
-  SshKeyPairResult call({String comment = _tunnelUsername}) {
+  SshKeyPairResult call({String comment = 'flume'}) {
     final signingKey = nacl.SigningKey.generate();
 
     // pinenacl Ed25519:

@@ -48,7 +48,7 @@ class VpnController {
       final identity = SshIdentity(
         id: connection.id,
         serverId: connection.serverId,
-        username: 'flume',
+        username: connection.username,
         authType: SshAuthType.privateKey,
         isAdmin: false,
         privateKeyPem: connection.privateKeyPem,

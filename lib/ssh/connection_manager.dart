@@ -5,15 +5,27 @@ import '../models/server.dart';
 import '../models/ssh_identity.dart';
 import '../storage/server_repository.dart';
 import 'key_generator.dart';
+import 'ssh_client_factory.dart';
 
-const _tunnelUsername = 'flume';
+/// Derives a safe Linux username from a human-readable label.
+/// Result is always prefixed with "flume_", max 32 chars total.
+/// Example: "Alice's phone" → "flume_alice_s_phone"
+String usernameFromLabel(String label) {
+  final slug = label
+      .toLowerCase()
+      .replaceAll(RegExp(r'[^a-z0-9]'), '_')
+      .replaceAll(RegExp(r'_+'), '_')
+      .replaceAll(RegExp(r'^_+|_+$'), '');
+  final part = slug.isEmpty ? 'user' : slug.substring(0, slug.length.clamp(0, 24));
+  return 'flume_$part';
+}
 
-/// Generates a key pair, installs the public key on the server for [label],
-/// saves the connection (without private key) to [repository], and returns
-/// the full [Connection] including the private key for export as invite.
+/// Generates a key pair, creates a dedicated Linux user for [label],
+/// installs the public key with restrict,port-forwarding, saves the
+/// Connection (without private key) to [repository], and returns the
+/// full Connection including the private key for export as invite.
 ///
-/// The private key is NOT stored locally — it is only returned here so the
-/// caller can export it as an encrypted invite for the recipient.
+/// The private key is NOT stored locally — returned only for export.
 class AddConnection {
   final ServerRepository repository;
   final GenerateSshKeyPair _generateKey;
@@ -25,15 +37,14 @@ class AddConnection {
     SshIdentity adminIdentity,
     String label,
   ) async {
-    final keyPair = _generateKey(comment: label.replaceAll(' ', '_'));
+    final username = usernameFromLabel(label);
+    final keyPair = _generateKey(comment: username);
 
     final socket = await SSHSocket.connect(server.host, server.port);
-    final client = SSHClient(
+    final client = buildSshClient(
       socket,
       username: adminIdentity.username,
-      onPasswordRequest: adminIdentity.password != null
-          ? () => adminIdentity.password!
-          : null,
+      password: adminIdentity.password,
       identities: adminIdentity.privateKeyPem != null
           ? [...SSHKeyPair.fromPem(adminIdentity.privateKeyPem!)]
           : null,
@@ -41,7 +52,7 @@ class AddConnection {
 
     try {
       await client.authenticated;
-      await _appendAuthorizedKey(client, keyPair.publicKeyOpenSSH);
+      await _setupUser(client, username, keyPair.publicKeyOpenSSH);
     } finally {
       client.close();
       await socket.done;
@@ -54,6 +65,7 @@ class AddConnection {
       id: id,
       serverId: server.id,
       label: label,
+      username: username,
       publicKeyOpenSSH: keyPair.publicKeyOpenSSH,
       createdAt: DateTime.now(),
     );
@@ -64,21 +76,28 @@ class AddConnection {
       id: id,
       serverId: server.id,
       label: label,
+      username: username,
       publicKeyOpenSSH: keyPair.publicKeyOpenSSH,
       privateKeyPem: keyPair.privateKeyPem,
       createdAt: storedConnection.createdAt,
     );
   }
 
-  Future<void> _appendAuthorizedKey(SSHClient client, String pubkey) async {
-    // restrict,port-forwarding limits the key to port forwarding only.
-    // No shell, no X11, no agent forwarding, no command execution.
+  Future<void> _setupUser(
+    SSHClient client,
+    String username,
+    String pubkey,
+  ) async {
+    await _exec(client, 'useradd -m -s /bin/false $username');
+
     final restrictedEntry = 'restrict,port-forwarding $pubkey';
-    final escaped = _shellQuote(restrictedEntry);
-    await _exec(
-      client,
-      'echo $escaped >> /home/$_tunnelUsername/.ssh/authorized_keys',
-    );
+    await _exec(client, [
+      'mkdir -p /home/$username/.ssh',
+      'echo ${_shellQuote(restrictedEntry)} > /home/$username/.ssh/authorized_keys',
+      'chmod 700 /home/$username/.ssh',
+      'chmod 600 /home/$username/.ssh/authorized_keys',
+      'chown -R $username:$username /home/$username/.ssh',
+    ].join(' && '));
   }
 
   Future<void> _exec(SSHClient client, String command) async {
@@ -93,8 +112,7 @@ class AddConnection {
   String _shellQuote(String s) => "'${s.replaceAll("'", "'\\''")}'";
 }
 
-/// Removes a connection's public key from authorized_keys and deletes it
-/// from local storage.
+/// Deletes the Linux user for [connection] and removes it from local storage.
 class RevokeConnection {
   final ServerRepository repository;
 
@@ -106,12 +124,10 @@ class RevokeConnection {
     Connection connection,
   ) async {
     final socket = await SSHSocket.connect(server.host, server.port);
-    final client = SSHClient(
+    final client = buildSshClient(
       socket,
       username: adminIdentity.username,
-      onPasswordRequest: adminIdentity.password != null
-          ? () => adminIdentity.password!
-          : null,
+      password: adminIdentity.password,
       identities: adminIdentity.privateKeyPem != null
           ? [...SSHKeyPair.fromPem(adminIdentity.privateKeyPem!)]
           : null,
@@ -119,26 +135,14 @@ class RevokeConnection {
 
     try {
       await client.authenticated;
-      await _removeKey(client, connection.publicKeyOpenSSH);
+      // -r removes home directory and mail spool.
+      await _exec(client, 'userdel -r ${connection.username}');
     } finally {
       client.close();
       await socket.done;
     }
 
     await repository.deleteConnection(connection);
-  }
-
-  Future<void> _removeKey(SSHClient client, String pubkey) async {
-    // The authorized_keys line starts with "restrict,port-forwarding ssh-ed25519 ..."
-    // Match by the key body (everything after "restrict,port-forwarding ").
-    final keyBody = _shellQuote(pubkey);
-    final authKeysPath = '/home/$_tunnelUsername/.ssh/authorized_keys';
-
-    // Use grep to remove lines containing the key. The key is unique per connection.
-    await _exec(
-      client,
-      'grep -v $keyBody $authKeysPath > /tmp/.ak_tmp && mv /tmp/.ak_tmp $authKeysPath && chmod 600 $authKeysPath',
-    );
   }
 
   Future<void> _exec(SSHClient client, String command) async {
@@ -149,6 +153,4 @@ class RevokeConnection {
       throw Exception('Remote command failed (exit $exitCode): $command');
     }
   }
-
-  String _shellQuote(String s) => "'${s.replaceAll("'", "'\\''")}'";
 }

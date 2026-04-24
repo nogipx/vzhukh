@@ -44,7 +44,7 @@ class _ExportInviteScreenState extends State<ExportInviteScreen> {
         host: widget.server.host,
         port: widget.server.port,
         nickname: widget.server.nickname,
-        username: 'flume',
+        username: widget.connection.username,
         privateKeyPem: widget.connection.privateKeyPem!,
       );
       final encoded = _codec.encode(payload, _passwordCtrl.text);
@@ -63,6 +63,31 @@ class _ExportInviteScreenState extends State<ExportInviteScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            if (!widget.connection.canConnect)
+              Container(
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.orange),
+                ),
+                child: const Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.warning_amber_rounded, color: Colors.orange),
+                    SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'This private key is not stored on this device. '
+                        'If you close this screen without exporting, '
+                        'you will need to revoke and recreate this connection.',
+                        style: TextStyle(color: Colors.orange, fontSize: 13),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             const Text(
               'Set a password to encrypt the invite. Share the QR code and the password separately (e.g. QR via messenger, password in person).',
               style: TextStyle(color: Colors.grey),

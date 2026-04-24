@@ -97,87 +97,107 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
     final passCtrl = TextEditingController();
     final formKey = GlobalKey<FormState>();
     bool obscure = true;
+    String previewUsername = '';
 
     final result = await showDialog<(String, SshIdentity)?>(
       context: context,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: const Text('Add connection'),
-          content: SingleChildScrollView(
-            child: Form(
-              key: formKey,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  TextFormField(
-                    controller: labelCtrl,
-                    decoration: const InputDecoration(
-                      labelText: 'Label',
-                      hintText: 'Alice\'s phone',
-                    ),
-                    validator: (v) =>
-                        v == null || v.trim().isEmpty ? 'Required' : null,
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: userCtrl,
-                    decoration:
-                        const InputDecoration(labelText: 'Admin username'),
-                    validator: (v) =>
-                        v == null || v.trim().isEmpty ? 'Required' : null,
-                  ),
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    controller: passCtrl,
-                    obscureText: obscure,
-                    decoration: InputDecoration(
-                      labelText: 'Admin password',
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                            obscure ? Icons.visibility : Icons.visibility_off),
-                        onPressed: () =>
-                            setDialogState(() => obscure = !obscure),
+        builder: (ctx, setDialogState) {
+          labelCtrl.addListener(() {
+            final preview = usernameFromLabel(labelCtrl.text.trim());
+            if (preview != previewUsername) {
+              setDialogState(() => previewUsername = preview);
+            }
+          });
+          return AlertDialog(
+            title: const Text('Add connection'),
+            content: SingleChildScrollView(
+              child: Form(
+                key: formKey,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    TextFormField(
+                      controller: labelCtrl,
+                      decoration: const InputDecoration(
+                        labelText: 'Label',
+                        hintText: "Alice's phone",
                       ),
+                      validator: (v) =>
+                          v == null || v.trim().isEmpty ? 'Required' : null,
                     ),
-                    validator: (v) =>
-                        v == null || v.isEmpty ? 'Required' : null,
-                  ),
-                ],
+                    if (previewUsername.isNotEmpty) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        'Linux user: $previewUsername',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Theme.of(ctx).colorScheme.secondary,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: userCtrl,
+                      decoration:
+                          const InputDecoration(labelText: 'Admin username'),
+                      validator: (v) =>
+                          v == null || v.trim().isEmpty ? 'Required' : null,
+                    ),
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      controller: passCtrl,
+                      obscureText: obscure,
+                      decoration: InputDecoration(
+                        labelText: 'Admin password',
+                        suffixIcon: IconButton(
+                          icon: Icon(obscure
+                              ? Icons.visibility
+                              : Icons.visibility_off),
+                          onPressed: () =>
+                              setDialogState(() => obscure = !obscure),
+                        ),
+                      ),
+                      validator: (v) =>
+                          v == null || v.isEmpty ? 'Required' : null,
+                    ),
+                  ],
+                ),
               ),
             ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                if (!formKey.currentState!.validate()) return;
-                final admin = SshIdentity(
-                  id: 'admin_temp',
-                  serverId: widget.server.id,
-                  username: userCtrl.text.trim(),
-                  authType: SshAuthType.password,
-                  isAdmin: true,
-                  password: passCtrl.text,
-                );
-                Navigator.pop(ctx, (labelCtrl.text.trim(), admin));
-              },
-              child: const Text('Add'),
-            ),
-          ],
-        ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                onPressed: () {
+                  if (!formKey.currentState!.validate()) return;
+                  final admin = SshIdentity(
+                    id: 'admin_temp',
+                    serverId: widget.server.id,
+                    username: userCtrl.text.trim(),
+                    authType: SshAuthType.password,
+                    isAdmin: true,
+                    password: passCtrl.text,
+                  );
+                  Navigator.pop(ctx, (labelCtrl.text.trim(), admin));
+                },
+                child: const Text('Add'),
+              ),
+            ],
+          );
+        },
       ),
     );
 
     if (result == null) return;
     final (label, adminIdentity) = result;
 
-    final addConnection = AddConnection(_repo);
-
+    Object? operationError;
     Connection? newConnection;
-    String? error;
 
     if (!mounted) return;
     await showDialog(
@@ -185,28 +205,27 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
       barrierDismissible: false,
       builder: (ctx) => _WorkingDialog(
         label: 'Adding connection...',
-        future: addConnection(widget.server, adminIdentity, label).then((c) {
-          newConnection = c;
-        }).catchError((e) {
-          error = e.toString();
-        }),
-        onDone: () => Navigator.pop(ctx),
+        future: AddConnection(_repo)(widget.server, adminIdentity, label)
+            .then((c) => newConnection = c),
+        onDone: (error) {
+          operationError = error;
+          Navigator.pop(ctx);
+        },
       ),
     );
 
     await _load();
-
     if (!mounted) return;
 
-    if (error != null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $error'), backgroundColor: Colors.red),
-      );
+    if (operationError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(operationError.toString()),
+        backgroundColor: Colors.red,
+      ));
       return;
     }
 
     if (newConnection != null) {
-      // Offer to export invite immediately.
       await Navigator.push(
         context,
         MaterialPageRoute(
@@ -225,7 +244,9 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
       builder: (ctx) => AlertDialog(
         title: const Text('Revoke access?'),
         content: Text(
-            '"${connection.label}" will no longer be able to connect.'),
+          '"${connection.label}" (${connection.username}) will no longer be able to connect. '
+          'The Linux user will be deleted from the server.',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
@@ -233,39 +254,41 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child:
-                const Text('Revoke', style: TextStyle(color: Colors.red)),
+            child: const Text('Revoke', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
     );
     if (confirmed != true) return;
 
-    // Ask for admin credentials.
     final adminIdentity = await _promptAdminCredentials();
     if (adminIdentity == null) return;
 
+    Object? operationError;
+
     if (!mounted) return;
-    String? error;
     await showDialog(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => _WorkingDialog(
-        label: 'Revoking...',
-        future: RevokeConnection(_repo)(widget.server, adminIdentity, connection)
-            .catchError((e) {
-          error = e.toString();
-        }),
-        onDone: () => Navigator.pop(ctx),
+        label: 'Revoking ${connection.username}...',
+        future:
+            RevokeConnection(_repo)(widget.server, adminIdentity, connection),
+        onDone: (error) {
+          operationError = error;
+          Navigator.pop(ctx);
+        },
       ),
     );
 
     await _load();
+    if (!mounted) return;
 
-    if (error != null && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error: $error'), backgroundColor: Colors.red),
-      );
+    if (operationError != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(operationError.toString()),
+        backgroundColor: Colors.red,
+      ));
     }
   }
 
@@ -422,6 +445,8 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
   }
 }
 
+// ---------------------------------------------------------------------------
+
 class _ConnectionTile extends StatelessWidget {
   final Connection connection;
   final Server server;
@@ -443,8 +468,12 @@ class _ConnectionTile extends StatelessWidget {
       ),
       title: Text(connection.label),
       subtitle: Text(
-        connection.canConnect ? 'This device' : 'External',
-        style: const TextStyle(fontSize: 12),
+        connection.username,
+        style: TextStyle(
+          fontSize: 12,
+          fontFamily: 'monospace',
+          color: Theme.of(context).colorScheme.secondary,
+        ),
       ),
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
@@ -474,10 +503,14 @@ class _ConnectionTile extends StatelessWidget {
   }
 }
 
+// ---------------------------------------------------------------------------
+
+/// Shows a progress dialog while [future] runs.
+/// Calls [onDone] with the error (or null on success) and closes itself.
 class _WorkingDialog extends StatefulWidget {
   final String label;
   final Future<void> future;
-  final VoidCallback onDone;
+  final void Function(Object? error) onDone;
 
   const _WorkingDialog({
     required this.label,
@@ -493,7 +526,9 @@ class _WorkingDialogState extends State<_WorkingDialog> {
   @override
   void initState() {
     super.initState();
-    widget.future.whenComplete(widget.onDone);
+    widget.future
+        .then((_) => widget.onDone(null))
+        .catchError((Object e) => widget.onDone(e));
   }
 
   @override
@@ -503,12 +538,14 @@ class _WorkingDialogState extends State<_WorkingDialog> {
         children: [
           const CircularProgressIndicator(),
           const SizedBox(width: 20),
-          Text(widget.label),
+          Expanded(child: Text(widget.label)),
         ],
       ),
     );
   }
 }
+
+// ---------------------------------------------------------------------------
 
 class _AppRoutingTile extends StatelessWidget {
   final AppRoutingConfig routing;
@@ -532,6 +569,8 @@ class _AppRoutingTile extends StatelessWidget {
     );
   }
 }
+
+// ---------------------------------------------------------------------------
 
 class _StatusCard extends StatelessWidget {
   final VpnController vpn;

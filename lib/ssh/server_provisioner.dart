@@ -5,8 +5,9 @@ import '../models/server.dart';
 import '../models/ssh_identity.dart';
 import '../storage/server_repository.dart';
 import 'key_generator.dart';
+import 'ssh_client_factory.dart';
 
-const _tunnelUsername = 'flume';
+const _ownerUsername = 'flume_owner';
 
 /// Connects to [server] using [adminIdentity] (password auth),
 /// creates the 'flume' system user, installs the owner's Ed25519 key
@@ -21,15 +22,13 @@ class ProvisionServer {
   ProvisionServer(this.repository) : _generateKey = const GenerateSshKeyPair();
 
   Future<Connection> call(Server server, SshIdentity adminIdentity) async {
-    final keyPair = _generateKey(comment: 'owner');
+    final keyPair = _generateKey(comment: _ownerUsername);
 
     final socket = await SSHSocket.connect(server.host, server.port);
-    final client = SSHClient(
+    final client = buildSshClient(
       socket,
       username: adminIdentity.username,
-      onPasswordRequest: adminIdentity.password != null
-          ? () => adminIdentity.password!
-          : null,
+      password: adminIdentity.password,
       identities: adminIdentity.privateKeyPem != null
           ? [...SSHKeyPair.fromPem(adminIdentity.privateKeyPem!)]
           : null,
@@ -48,6 +47,7 @@ class ProvisionServer {
       id: '${server.id}_owner',
       serverId: server.id,
       label: 'Owner',
+      username: _ownerUsername,
       publicKeyOpenSSH: keyPair.publicKeyOpenSSH,
       privateKeyPem: keyPair.privateKeyPem,
       createdAt: DateTime.now(),
@@ -58,21 +58,15 @@ class ProvisionServer {
   }
 
   Future<void> _runSetupCommands(SSHClient client, String pubkey) async {
-    // Create the user if it doesn't exist; -s /bin/false = no interactive login.
-    await _exec(
-      client,
-      'id $_tunnelUsername || useradd -m -s /bin/false $_tunnelUsername',
-    );
+    await _exec(client, 'useradd -m -s /bin/false $_ownerUsername');
 
-    // restrict,port-forwarding: no shell, no X11, no agent — only port forwarding.
     final restrictedEntry = 'restrict,port-forwarding $pubkey';
-
     await _exec(client, [
-      'mkdir -p /home/$_tunnelUsername/.ssh',
-      'echo ${_shellQuote(restrictedEntry)} > /home/$_tunnelUsername/.ssh/authorized_keys',
-      'chmod 700 /home/$_tunnelUsername/.ssh',
-      'chmod 600 /home/$_tunnelUsername/.ssh/authorized_keys',
-      'chown -R $_tunnelUsername:$_tunnelUsername /home/$_tunnelUsername/.ssh',
+      'mkdir -p /home/$_ownerUsername/.ssh',
+      'echo ${_shellQuote(restrictedEntry)} > /home/$_ownerUsername/.ssh/authorized_keys',
+      'chmod 700 /home/$_ownerUsername/.ssh',
+      'chmod 600 /home/$_ownerUsername/.ssh/authorized_keys',
+      'chown -R $_ownerUsername:$_ownerUsername /home/$_ownerUsername/.ssh',
     ].join(' && '));
   }
 

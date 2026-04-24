@@ -23,10 +23,14 @@ class Connection {
 
   final DateTime createdAt;
 
+  /// Linux username for this connection, e.g. "flume_alice".
+  final String username;
+
   const Connection({
     required this.id,
     required this.serverId,
     required this.label,
+    required this.username,
     required this.publicKeyOpenSSH,
     required this.createdAt,
     this.privateKeyPem,
@@ -38,6 +42,7 @@ class Connection {
         'id': id,
         'serverId': serverId,
         'label': label,
+        'username': username,
         'publicKeyOpenSSH': publicKeyOpenSSH,
         'privateKeyPem': privateKeyPem,
         'createdAt': createdAt.toIso8601String(),
@@ -47,6 +52,7 @@ class Connection {
         id: json['id'] as String,
         serverId: json['serverId'] as String,
         label: json['label'] as String,
+        username: json['username'] as String,
         publicKeyOpenSSH: json['publicKeyOpenSSH'] as String,
         privateKeyPem: json['privateKeyPem'] as String?,
         createdAt: DateTime.parse(json['createdAt'] as String),
