@@ -30,6 +30,8 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
 
   final _repo = ServerRepository();
 
+  late Server _server;
+
   List<Connection> _connections = [];
   Connection? _activeConnection;
   AppRoutingConfig _routing = const AppRoutingConfig.empty();
@@ -37,7 +39,40 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
   @override
   void initState() {
     super.initState();
+    _server = widget.server;
     _load();
+  }
+
+  Future<void> _rename() async {
+    final ctrl = TextEditingController(text: _server.nickname);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Rename server'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Nickname'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              final v = ctrl.text.trim();
+              if (v.isNotEmpty) Navigator.pop(ctx, v);
+            },
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+    if (result == null) return;
+    final updated = _server.copyWith(nickname: result);
+    await _repo.saveServer(updated);
+    if (mounted) setState(() => _server = updated);
   }
 
   Future<void> _load() async {
@@ -379,7 +414,16 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.server.nickname)),
+      appBar: AppBar(
+        title: Text(_server.nickname),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.edit_outlined),
+            tooltip: 'Rename',
+            onPressed: _rename,
+          ),
+        ],
+      ),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
