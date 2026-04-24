@@ -6,6 +6,8 @@ import '../storage/route_repository.dart';
 import '../storage/server_repository.dart';
 import '../vpn/route_resolver.dart';
 import '../vpn/vpn_controller.dart';
+import 'export_route_screen.dart';
+import 'import_route_screen.dart';
 import 'route_edit_screen.dart';
 
 class RouteListScreen extends StatefulWidget {
@@ -91,7 +93,23 @@ class _RouteListScreenState extends State<RouteListScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Routes'), centerTitle: true),
+      appBar: AppBar(
+        title: const Text('Routes'),
+        centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.qr_code_scanner),
+            tooltip: 'Import route',
+            onPressed: () async {
+              final imported = await Navigator.push<bool>(
+                context,
+                MaterialPageRoute(builder: (_) => const ImportRouteScreen()),
+              );
+              if (imported == true) await _load();
+            },
+          ),
+        ],
+      ),
       body: _routes.isEmpty
           ? const Center(
               child: Text(
@@ -110,6 +128,12 @@ class _RouteListScreenState extends State<RouteListScreen> {
                   onConnect: () => _connect(route),
                   onEdit: () => _openEdit(existing: route),
                   onDelete: () => _delete(route),
+                  onExport: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ExportRouteScreen(route: route),
+                    ),
+                  ),
                 );
               },
             ),
@@ -127,6 +151,7 @@ class _RouteTile extends StatelessWidget {
   final VoidCallback onConnect;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
+  final VoidCallback onExport;
 
   const _RouteTile({
     required this.route,
@@ -134,6 +159,7 @@ class _RouteTile extends StatelessWidget {
     required this.onConnect,
     required this.onEdit,
     required this.onDelete,
+    required this.onExport,
   });
 
   @override
@@ -167,10 +193,12 @@ class _RouteTile extends StatelessWidget {
           ),
           PopupMenuButton<String>(
             onSelected: (v) {
+              if (v == 'export') onExport();
               if (v == 'edit') onEdit();
               if (v == 'delete') onDelete();
             },
             itemBuilder: (_) => const [
+              PopupMenuItem(value: 'export', child: Text('Share via QR')),
               PopupMenuItem(value: 'edit', child: Text('Edit')),
               PopupMenuItem(
                 value: 'delete',
