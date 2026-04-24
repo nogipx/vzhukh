@@ -21,6 +21,7 @@ class _AppPickerScreenState extends State<AppPickerScreen> {
   late AppRoutingMode _mode;
   late Set<String> _selected;
   String _search = '';
+  final _searchFocus = FocusNode();
 
   @override
   void initState() {
@@ -28,6 +29,12 @@ class _AppPickerScreenState extends State<AppPickerScreen> {
     _mode = widget.initial.mode;
     _selected = widget.initial.packages.toSet();
     _loadApps();
+  }
+
+  @override
+  void dispose() {
+    _searchFocus.dispose();
+    super.dispose();
   }
 
   Future<void> _loadApps() async {
@@ -85,14 +92,25 @@ class _AppPickerScreenState extends State<AppPickerScreen> {
           _ModeSelector(mode: _mode, onChanged: (m) => setState(() => _mode = m)),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: TextField(
-              decoration: const InputDecoration(
-                hintText: 'Search apps…',
-                prefixIcon: Icon(Icons.search),
-                border: OutlineInputBorder(),
-                isDense: true,
+            child: Focus(
+              onKeyEvent: (_, event) {
+                if (event is KeyDownEvent &&
+                    event.logicalKey == LogicalKeyboardKey.arrowDown) {
+                  _searchFocus.unfocus();
+                  return KeyEventResult.handled;
+                }
+                return KeyEventResult.ignored;
+              },
+              child: TextField(
+                focusNode: _searchFocus,
+                decoration: const InputDecoration(
+                  hintText: 'Search apps…',
+                  prefixIcon: Icon(Icons.search),
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                onChanged: (v) => setState(() => _search = v),
               ),
-              onChanged: (v) => setState(() => _search = v),
             ),
           ),
           if (_selected.isNotEmpty)
@@ -121,6 +139,7 @@ class _AppPickerScreenState extends State<AppPickerScreen> {
                       final app = _filtered[i];
                       final checked = _selected.contains(app.packageName);
                       return CheckboxListTile(
+                        autofocus: i == 0,
                         value: checked,
                         onChanged: (_) => setState(() {
                           if (checked) {

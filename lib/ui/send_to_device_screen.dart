@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
@@ -35,22 +36,14 @@ class SendToDeviceScreen extends StatefulWidget {
 
 class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
   final _repo = ServerRepository();
-  final _codec = const RouteInviteCodec();
-  final _passwordCtrl = TextEditingController();
-  final _formKey = GlobalKey<FormState>();
 
-  bool _obscurePass = true;
   bool _preparing = false;
   String? _error;
 
-  // Set once server is started.
   HttpServer? _server;
   String? _ip;
   int? _port;
   bool _delivered = false;
-
-  bool get _needsPassword => widget._route != null;
-  bool get _serving => _server != null;
 
   String get _title =>
       widget._route != null ? 'Send: ${widget._route!.label}' : 'Send to device';
@@ -58,17 +51,36 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
   @override
   void initState() {
     super.initState();
-    // Pre-encoded mode: start serving immediately.
-    if (!_needsPassword) {
+    if (widget._route != null) {
+      _prepareRoute();
+    } else {
       _startServer(widget._preEncodedType!, widget._preEncoded!);
     }
   }
 
   @override
   void dispose() {
-    _passwordCtrl.dispose();
     _server?.close(force: true);
     super.dispose();
+  }
+
+  Future<void> _prepareRoute() async {
+    setState(() => _preparing = true);
+    try {
+      final hops = await _buildHopData();
+      final payload = RouteInvitePayload(
+        label: widget._route!.label,
+        hops: hops,
+      );
+      final encoded = base64Url.encode(
+        Uint8List.fromList(utf8.encode(jsonEncode(payload.toJson()))),
+      );
+      await _startServer('route_plain', encoded);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _preparing = false);
+    }
   }
 
   Future<List<RouteHopData>> _buildHopData() async {
@@ -99,27 +111,6 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
       ));
     }
     return hops;
-  }
-
-  Future<void> _prepare() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() {
-      _preparing = true;
-      _error = null;
-    });
-    try {
-      final hopData = await _buildHopData();
-      final payload = RouteInvitePayload(
-        label: widget._route!.label,
-        hops: hopData,
-      );
-      final encoded = await _codec.encodeAsync(payload, _passwordCtrl.text);
-      await _startServer('route', encoded);
-    } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
-    } finally {
-      if (mounted) setState(() => _preparing = false);
-    }
   }
 
   Future<void> _startServer(String type, String encoded) async {
@@ -167,61 +158,26 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_preparing) {
+      return Scaffold(
+        appBar: AppBar(title: Text(_title)),
+        body: const Center(child: CircularProgressIndicator()),
+      );
+    }
+    if (_error != null) {
+      return Scaffold(
+        appBar: AppBar(title: Text(_title)),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Text(_error!, style: const TextStyle(color: Colors.red)),
+          ),
+        ),
+      );
+    }
     return Scaffold(
       appBar: AppBar(title: Text(_title)),
-      body: _serving ? _buildQr() : _buildPasswordForm(),
-    );
-  }
-
-  Widget _buildPasswordForm() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(24),
-      child: Form(
-        key: _formKey,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const Text(
-              'Choose a password to encrypt the route. '
-              'You will need to tell it to the receiver.',
-              style: TextStyle(color: Colors.grey),
-            ),
-            const SizedBox(height: 24),
-            TextFormField(
-              controller: _passwordCtrl,
-              obscureText: _obscurePass,
-              autofocus: true,
-              decoration: InputDecoration(
-                labelText: 'Encryption password',
-                border: const OutlineInputBorder(),
-                suffixIcon: IconButton(
-                  icon: Icon(
-                      _obscurePass ? Icons.visibility : Icons.visibility_off),
-                  onPressed: () =>
-                      setState(() => _obscurePass = !_obscurePass),
-                ),
-              ),
-              validator: (v) => v == null || v.isEmpty ? 'Required' : null,
-            ),
-            const SizedBox(height: 24),
-            if (_error != null) ...[
-              Text(_error!, style: const TextStyle(color: Colors.red)),
-              const SizedBox(height: 12),
-            ],
-            FilledButton(
-              onPressed: _preparing ? null : _prepare,
-              child: _preparing
-                  ? const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white),
-                    )
-                  : const Text('Generate QR'),
-            ),
-          ],
-        ),
-      ),
+      body: _buildQr(),
     );
   }
 

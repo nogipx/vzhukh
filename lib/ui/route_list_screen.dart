@@ -1,8 +1,13 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 import '../models/app_routing_config.dart';
+import '../models/connection.dart';
+import '../models/server.dart';
 import '../models/tunnel_route.dart';
 import '../network/local_http_server.dart';
+import '../ssh/route_invite_codec.dart';
 import '../storage/route_repository.dart';
 import '../storage/server_repository.dart';
 import '../vpn/route_resolver.dart';
@@ -30,7 +35,8 @@ class RouteListScreen extends StatefulWidget {
 
 class _RouteListScreenState extends State<RouteListScreen> {
   final _routeRepo = RouteRepository();
-  final _resolver = RouteResolver(ServerRepository());
+  final _serverRepo = ServerRepository();
+  late final _resolver = RouteResolver(_serverRepo);
 
   List<TunnelRoute> _routes = [];
 
@@ -52,7 +58,10 @@ class _RouteListScreenState extends State<RouteListScreen> {
     );
     if (payload == null || !mounted) return;
 
-    if (payload.type == 'route') {
+    if (payload.type == 'route_plain') {
+      await _importDirectRoute(payload.data);
+      await _load();
+    } else if (payload.type == 'route') {
       await Navigator.push(
         context,
         MaterialPageRoute(
@@ -67,6 +76,85 @@ class _RouteListScreenState extends State<RouteListScreen> {
           builder: (_) => ImportInviteScreen(prefilled: payload.data),
         ),
       );
+    }
+  }
+
+  Future<void> _importDirectRoute(String encoded) async {
+    try {
+      final bytes = base64Url.decode(encoded);
+      final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
+      final routePayload = RouteInvitePayload.fromJson(json);
+
+      final existingServers = await _serverRepo.getServers();
+      final hops = <RouteHop>[];
+
+      for (final hopData in routePayload.hops) {
+        var server = existingServers.firstWhere(
+          (s) => s.host == hopData.host && s.port == hopData.port,
+          orElse: () => Server(
+            id: '${hopData.host}_${DateTime.now().microsecondsSinceEpoch}',
+            host: hopData.host,
+            port: hopData.port,
+            nickname: hopData.nickname,
+          ),
+        );
+        await _serverRepo.saveServer(server);
+
+        final connections = await _serverRepo.getConnections(server.id);
+        Connection? conn;
+        for (final c in connections) {
+          if (c.username == hopData.username) {
+            conn = c;
+            break;
+          }
+        }
+        if (conn == null) {
+          conn = Connection(
+            id: '${server.id}_${hopData.username}',
+            serverId: server.id,
+            label: hopData.username,
+            username: hopData.username,
+            publicKeyOpenSSH: '',
+            privateKeyPem: hopData.privateKeyPem,
+            createdAt: DateTime.now(),
+          );
+          await _serverRepo.saveConnection(conn);
+        } else if (conn.privateKeyPem == null) {
+          conn = Connection(
+            id: conn.id,
+            serverId: conn.serverId,
+            label: conn.label,
+            username: conn.username,
+            publicKeyOpenSSH: conn.publicKeyOpenSSH,
+            privateKeyPem: hopData.privateKeyPem,
+            createdAt: conn.createdAt,
+          );
+          await _serverRepo.saveConnection(conn);
+        }
+        hops.add(RouteHop(serverId: server.id, connectionId: conn.id));
+      }
+
+      final route = TunnelRoute(
+        id: 'route_${DateTime.now().millisecondsSinceEpoch}',
+        label: routePayload.label,
+        hops: hops,
+      );
+      await _routeRepo.saveRoute(route);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Route "${route.label}" imported.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Import failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 

@@ -214,8 +214,6 @@ class _ImportInviteScreenState extends State<ImportInviteScreen> {
               focusNode: _passwordFocus,
               autofocus: _isPrefilled,
               obscureText: _obscurePass,
-              textInputAction: TextInputAction.done,
-              onFieldSubmitted: (_) => _import(),
               decoration: InputDecoration(
                 labelText: 'Invite password',
                 border: const OutlineInputBorder(),

@@ -232,8 +232,6 @@ class _ImportRouteScreenState extends State<ImportRouteScreen> {
               focusNode: _passwordFocus,
               autofocus: _isPrefilled,
               obscureText: _obscurePass,
-              textInputAction: TextInputAction.done,
-              onFieldSubmitted: (_) => _import(),
               decoration: InputDecoration(
                 labelText: 'Route password',
                 border: const OutlineInputBorder(),
