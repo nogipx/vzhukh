@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/app_routing_config.dart';
 import '../models/tunnel_route.dart';
+import '../network/local_http_server.dart';
 import '../storage/route_repository.dart';
 import '../storage/server_repository.dart';
 import '../vpn/route_resolver.dart';
@@ -9,14 +10,17 @@ import '../vpn/vpn_controller.dart';
 import 'export_route_screen.dart';
 import 'import_route_screen.dart';
 import 'route_edit_screen.dart';
+import 'send_to_device_screen.dart';
 
 class RouteListScreen extends StatefulWidget {
   final VpnController vpn;
+  final LocalHttpServer server;
   final AppRoutingConfig? routing;
 
   const RouteListScreen({
     super.key,
     required this.vpn,
+    required this.server,
     this.routing,
   });
 
@@ -29,11 +33,40 @@ class _RouteListScreenState extends State<RouteListScreen> {
   final _resolver = RouteResolver(ServerRepository());
 
   List<TunnelRoute> _routes = [];
+  String? _localIp;
 
   @override
   void initState() {
     super.initState();
     _load();
+    _resolveIp();
+    widget.server.received.addListener(_onReceived);
+  }
+
+  @override
+  void dispose() {
+    widget.server.received.removeListener(_onReceived);
+    super.dispose();
+  }
+
+  Future<void> _resolveIp() async {
+    final ip = await LocalHttpServer.localIp();
+    if (mounted) setState(() => _localIp = ip);
+  }
+
+  void _onReceived() {
+    final payload = widget.server.received.value;
+    if (payload == null) return;
+    widget.server.received.value = null; // consume
+
+    if (payload.type == 'route') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ImportRouteScreen(prefilled: payload.data),
+        ),
+      ).then((_) => _load());
+    }
   }
 
   Future<void> _load() async {
@@ -110,36 +143,76 @@ class _RouteListScreenState extends State<RouteListScreen> {
           ),
         ],
       ),
-      body: _routes.isEmpty
-          ? const Center(
-              child: Text(
-                'No routes yet.\nTap + to create one.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.grey),
-              ),
-            )
-          : ListView.builder(
-              itemCount: _routes.length,
-              itemBuilder: (_, i) {
-                final route = _routes[i];
-                return _RouteTile(
-                  route: route,
-                  vpn: widget.vpn,
-                  onConnect: () => _connect(route),
-                  onEdit: () => _openEdit(existing: route),
-                  onDelete: () => _delete(route),
-                  onExport: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ExportRouteScreen(route: route),
+      body: Column(
+        children: [
+          if (_localIp != null)
+            _ReceiverBanner(ip: _localIp!, port: LocalHttpServer.port),
+          Expanded(
+            child: _routes.isEmpty
+                ? const Center(
+                    child: Text(
+                      'No routes yet.\nTap + to create one.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: Colors.grey),
                     ),
+                  )
+                : ListView.builder(
+                    itemCount: _routes.length,
+                    itemBuilder: (_, i) {
+                      final route = _routes[i];
+                      return _RouteTile(
+                        route: route,
+                        vpn: widget.vpn,
+                        onConnect: () => _connect(route),
+                        onEdit: () => _openEdit(existing: route),
+                        onDelete: () => _delete(route),
+                        onExport: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ExportRouteScreen(route: route),
+                          ),
+                        ),
+                        onSend: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => SendToDeviceScreen(route: route),
+                          ),
+                        ),
+                      );
+                    },
                   ),
-                );
-              },
-            ),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _openEdit(),
         child: const Icon(Icons.add),
+      ),
+    );
+  }
+}
+
+class _ReceiverBanner extends StatelessWidget {
+  final String ip;
+  final int port;
+
+  const _ReceiverBanner({required this.ip, required this.port});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      child: Row(
+        children: [
+          const Icon(Icons.wifi, size: 16),
+          const SizedBox(width: 8),
+          Text(
+            'Receiving on $ip:$port',
+            style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
+          ),
+        ],
       ),
     );
   }
@@ -152,6 +225,7 @@ class _RouteTile extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onDelete;
   final VoidCallback onExport;
+  final VoidCallback onSend;
 
   const _RouteTile({
     required this.route,
@@ -160,6 +234,7 @@ class _RouteTile extends StatelessWidget {
     required this.onEdit,
     required this.onDelete,
     required this.onExport,
+    required this.onSend,
   });
 
   @override
@@ -183,7 +258,9 @@ class _RouteTile extends StatelessWidget {
                   status == VpnStatus.reconnecting;
               return IconButton(
                 icon: Icon(
-                  isActive ? Icons.stop_circle_outlined : Icons.play_circle_outline,
+                  isActive
+                      ? Icons.stop_circle_outlined
+                      : Icons.play_circle_outline,
                   color: isActive ? Colors.red : Colors.green,
                 ),
                 tooltip: isActive ? 'Disconnect' : 'Connect',
@@ -193,11 +270,13 @@ class _RouteTile extends StatelessWidget {
           ),
           PopupMenuButton<String>(
             onSelected: (v) {
+              if (v == 'send') onSend();
               if (v == 'export') onExport();
               if (v == 'edit') onEdit();
               if (v == 'delete') onDelete();
             },
             itemBuilder: (_) => const [
+              PopupMenuItem(value: 'send', child: Text('Send to device')),
               PopupMenuItem(value: 'export', child: Text('Share via QR')),
               PopupMenuItem(value: 'edit', child: Text('Edit')),
               PopupMenuItem(

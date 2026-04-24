@@ -9,7 +9,10 @@ import '../storage/route_repository.dart';
 import '../storage/server_repository.dart';
 
 class ImportRouteScreen extends StatefulWidget {
-  const ImportRouteScreen({super.key});
+  /// Pre-filled encoded payload (e.g. received via local network push).
+  final String? prefilled;
+
+  const ImportRouteScreen({super.key, this.prefilled});
 
   @override
   State<ImportRouteScreen> createState() => _ImportRouteScreenState();
@@ -29,6 +32,15 @@ class _ImportRouteScreenState extends State<ImportRouteScreen> {
   bool _importing = false;
   String? _error;
   String? _scannedData;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.prefilled != null) {
+      _pasteCtrl.text = widget.prefilled!;
+      _scannedData = widget.prefilled;
+    }
+  }
 
   @override
   void dispose() {
