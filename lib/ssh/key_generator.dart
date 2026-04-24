@@ -22,7 +22,7 @@ class SshKeyPairResult {
 class GenerateSshKeyPair {
   const GenerateSshKeyPair();
 
-  SshKeyPairResult call({String comment = 'flume'}) {
+  SshKeyPairResult call({String comment = 'vzhukh'}) {
     final signingKey = nacl.SigningKey.generate();
 
     // pinenacl Ed25519:

@@ -33,6 +33,7 @@ class VpnController {
   Timer? _retryTimer;
 
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
+  List<ConnectivityResult>? _lastConnectivity;
 
   Future<void> connect(Server server, Connection connection, {AppRoutingConfig? routing}) async {
     _retryTimer?.cancel();
@@ -109,6 +110,7 @@ class VpnController {
 
   void _startConnectivityMonitor() {
     _connectivitySub?.cancel();
+    _lastConnectivity = null; // first emission is current state, not a change
     _connectivitySub = Connectivity()
         .onConnectivityChanged
         .listen(_onConnectivityChanged);
@@ -121,6 +123,13 @@ class VpnController {
 
   void _onConnectivityChanged(List<ConnectivityResult> results) {
     if (_userDisconnected) return;
+
+    final previous = _lastConnectivity;
+    _lastConnectivity = results;
+
+    // Skip the first emission — it's the current state, not an actual change.
+    if (previous == null) return;
+
     final hasNetwork = results.any((r) => r != ConnectivityResult.none);
     if (!hasNetwork) return;
 
