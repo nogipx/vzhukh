@@ -16,7 +16,17 @@ class NetworkReceiveScreen extends StatefulWidget {
 class _NetworkReceiveScreenState extends State<NetworkReceiveScreen> {
   bool _fetching = false;
   bool _scanned = false;
+  bool _manualMode = false;
   String? _error;
+
+  final _ipCtrl = TextEditingController();
+  final _formKey = GlobalKey<FormState>();
+
+  @override
+  void dispose() {
+    _ipCtrl.dispose();
+    super.dispose();
+  }
 
   void _onBarcodeDetected(BarcodeCapture capture) {
     if (_fetching || _scanned) return;
@@ -28,9 +38,17 @@ class _NetworkReceiveScreenState extends State<NetworkReceiveScreen> {
       final port = json['port'] as int;
       setState(() => _scanned = true);
       _fetch(ip, port);
-    } catch (_) {
-      // not a valid QR — keep scanning
-    }
+    } catch (_) {}
+  }
+
+  Future<void> _fetchManual() async {
+    if (!_formKey.currentState!.validate()) return;
+    final parts = _ipCtrl.text.trim().split(':');
+    if (parts.length != 2) return;
+    final ip = parts[0];
+    final port = int.tryParse(parts[1]);
+    if (port == null) return;
+    await _fetch(ip, port);
   }
 
   Future<void> _fetch(String ip, int port) async {
@@ -68,13 +86,22 @@ class _NetworkReceiveScreenState extends State<NetworkReceiveScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Receive from device')),
-      body: Stack(
-        children: [
+      appBar: AppBar(
+        title: const Text('Receive from device'),
+        actions: [
           if (!_fetching)
-            MobileScanner(onDetect: _onBarcodeDetected),
-          if (_fetching)
-            const Center(
+            TextButton(
+              onPressed: () => setState(() {
+                _manualMode = !_manualMode;
+                _error = null;
+                _scanned = false;
+              }),
+              child: Text(_manualMode ? 'Scan QR' : 'Enter manually'),
+            ),
+        ],
+      ),
+      body: _fetching
+          ? const Center(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -83,51 +110,91 @@ class _NetworkReceiveScreenState extends State<NetworkReceiveScreen> {
                   Text('Receiving...'),
                 ],
               ),
-            ),
-          if (_error != null)
-            Positioned(
-              bottom: 40,
-              left: 24,
-              right: 24,
-              child: Column(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Colors.red.withValues(alpha: 0.85),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      _error!,
-                      style: const TextStyle(color: Colors.white),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  OutlinedButton(
-                    onPressed: () => setState(() => _error = null),
-                    style: OutlinedButton.styleFrom(
-                      backgroundColor: Colors.black54,
-                      foregroundColor: Colors.white,
-                    ),
-                    child: const Text('Try again'),
-                  ),
-                ],
-              ),
             )
-          else if (!_fetching)
-            const Positioned(
-              bottom: 40,
-              left: 0,
-              right: 0,
-              child: Center(
-                child: Text(
-                  'Scan the QR on the sending device',
-                  style: TextStyle(color: Colors.white, fontSize: 14),
-                ),
+          : _manualMode
+              ? _buildManualForm()
+              : _buildScanner(),
+    );
+  }
+
+  Widget _buildScanner() {
+    return Stack(
+      children: [
+        MobileScanner(onDetect: _onBarcodeDetected),
+        if (_error != null)
+          Positioned(
+            bottom: 80,
+            left: 24,
+            right: 24,
+            child: Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.85),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                _error!,
+                style: const TextStyle(color: Colors.white),
+                textAlign: TextAlign.center,
               ),
             ),
-        ],
+          ),
+        const Positioned(
+          bottom: 40,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: Text(
+              'Scan the QR on the sending device',
+              style: TextStyle(color: Colors.white, fontSize: 14),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildManualForm() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Enter the address shown on the sending device.',
+              style: TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 24),
+            TextFormField(
+              controller: _ipCtrl,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Address',
+                hintText: '192.168.1.x:port',
+                border: OutlineInputBorder(),
+              ),
+              validator: (v) {
+                if (v == null || v.trim().isEmpty) return 'Required';
+                final parts = v.trim().split(':');
+                if (parts.length != 2 || int.tryParse(parts[1]) == null) {
+                  return 'Format: ip:port';
+                }
+                return null;
+              },
+            ),
+            const SizedBox(height: 24),
+            if (_error != null) ...[
+              Text(_error!, style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 12),
+            ],
+            FilledButton(
+              onPressed: _fetchManual,
+              child: const Text('Connect'),
+            ),
+          ],
+        ),
       ),
     );
   }
