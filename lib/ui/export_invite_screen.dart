@@ -67,7 +67,10 @@ class _ExportInviteScreenState extends State<ExportInviteScreen> {
     );
     if (ip == null || !mounted) return;
     try {
-      await LocalHttpServer.sendTo(host: ip, type: 'invite', payload: encoded);
+      final parts = ip.split(':');
+      final host = parts[0];
+      final port = parts.length > 1 ? int.parse(parts[1]) : LocalHttpServer.port;
+      await LocalHttpServer.sendTo(host: host, port: port, type: 'invite', payload: encoded);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Sent! Enter the password on the receiving device.')),

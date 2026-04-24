@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'network/local_http_server.dart';
 import 'ui/route_list_screen.dart';
 import 'ui/server_list_screen.dart';
 import 'vpn/vpn_controller.dart';
@@ -38,19 +37,11 @@ class _HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<_HomeScreen> {
   final _vpn = VpnController();
-  final _server = LocalHttpServer();
   int _tab = 0;
-
-  @override
-  void initState() {
-    super.initState();
-    _server.start();
-  }
 
   @override
   void dispose() {
     _vpn.dispose();
-    _server.stop();
     super.dispose();
   }
 
@@ -60,8 +51,8 @@ class _HomeScreenState extends State<_HomeScreen> {
       body: IndexedStack(
         index: _tab,
         children: [
-          ServerListScreen(vpn: _vpn, server: _server),
-          RouteListScreen(vpn: _vpn, server: _server),
+          ServerListScreen(vpn: _vpn),
+          RouteListScreen(vpn: _vpn),
         ],
       ),
       bottomNavigationBar: NavigationBar(

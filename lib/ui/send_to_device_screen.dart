@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../models/tunnel_route.dart';
 import '../network/local_http_server.dart';
@@ -17,20 +20,31 @@ class SendToDeviceScreen extends StatefulWidget {
 class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
   final _repo = ServerRepository();
   final _codec = const RouteInviteCodec();
-  final _ipCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _formKey = GlobalKey<FormState>();
 
   bool _obscurePass = true;
   bool _sending = false;
   String? _error;
-  String? _successMessage;
+  _ScannedTarget? _target;
 
   @override
   void dispose() {
-    _ipCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
+  }
+
+  void _onBarcodeDetected(BarcodeCapture capture) {
+    final raw = capture.barcodes.firstOrNull?.rawValue;
+    if (raw == null) return;
+    try {
+      final json = jsonDecode(raw) as Map<String, dynamic>;
+      final ip = json['ip'] as String;
+      final port = json['port'] as int;
+      setState(() => _target = _ScannedTarget(ip: ip, port: port));
+    } catch (_) {
+      // not a valid target QR — keep scanning
+    }
   }
 
   Future<List<RouteHopData>> _buildHopData() async {
@@ -65,11 +79,11 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
 
   Future<void> _send() async {
     if (!_formKey.currentState!.validate()) return;
+    final target = _target!;
 
     setState(() {
       _sending = true;
       _error = null;
-      _successMessage = null;
     });
 
     try {
@@ -80,12 +94,18 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
       );
       final encoded = _codec.encode(payload, _passwordCtrl.text);
       await LocalHttpServer.sendTo(
-        host: _ipCtrl.text.trim(),
+        host: target.ip,
+        port: target.port,
         type: 'route',
         payload: encoded,
       );
       if (mounted) {
-        setState(() => _successMessage = 'Sent! Enter the password on the receiving device.');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Sent! Enter the password on the receiving device.'),
+          ),
+        );
+        Navigator.pop(context);
       }
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
@@ -97,83 +117,111 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('Send: ${widget.route.label}')),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24),
-        child: Form(
-          key: _formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                'Send this route to another device running Vzhukh on the same network. '
-                'Enter the receiving device\'s IP address (shown in its Routes screen).',
-                style: const TextStyle(color: Colors.grey),
-              ),
-              const SizedBox(height: 24),
-              TextFormField(
-                controller: _ipCtrl,
-                decoration: const InputDecoration(
-                  labelText: 'Device IP address',
-                  hintText: '192.168.1.x',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.tv),
-                ),
-                validator: (v) =>
-                    v == null || v.trim().isEmpty ? 'Required' : null,
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: _passwordCtrl,
-                obscureText: _obscurePass,
-                decoration: InputDecoration(
-                  labelText: 'Encryption password',
-                  hintText: 'Tell this password to the receiver',
-                  border: const OutlineInputBorder(),
-                  suffixIcon: IconButton(
-                    icon: Icon(
-                        _obscurePass ? Icons.visibility : Icons.visibility_off),
-                    onPressed: () =>
-                        setState(() => _obscurePass = !_obscurePass),
-                  ),
-                ),
-                validator: (v) =>
-                    v == null || v.isEmpty ? 'Required' : null,
-              ),
-              const SizedBox(height: 24),
-              if (_error != null) ...[
-                Text(_error!, style: const TextStyle(color: Colors.red)),
-                const SizedBox(height: 12),
-              ],
-              if (_successMessage != null) ...[
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.green.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.green),
-                  ),
-                  child: Text(_successMessage!,
-                      style: const TextStyle(color: Colors.green)),
-                ),
-                const SizedBox(height: 12),
-              ],
-              FilledButton.icon(
-                onPressed: _sending ? null : _send,
-                icon: _sending
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : const Icon(Icons.send),
-                label: const Text('Send'),
-              ),
-            ],
+      appBar: AppBar(
+        title: Text('Send: ${widget.route.label}'),
+        actions: [
+          if (_target != null)
+            TextButton(
+              onPressed: () => setState(() => _target = null),
+              child: const Text('Rescan'),
+            ),
+        ],
+      ),
+      body: _target == null ? _buildScanner() : _buildForm(),
+    );
+  }
+
+  Widget _buildScanner() {
+    return Stack(
+      children: [
+        MobileScanner(onDetect: _onBarcodeDetected),
+        const Positioned(
+          bottom: 40,
+          left: 0,
+          right: 0,
+          child: Center(
+            child: Text(
+              'Scan the QR on the receiving device',
+              style: TextStyle(color: Colors.white, fontSize: 14),
+            ),
           ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildForm() {
+    final target = _target!;
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Form(
+        key: _formKey,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.green.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.green),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle, color: Colors.green),
+                  const SizedBox(width: 8),
+                  Text(
+                    '${target.ip}:${target.port}',
+                    style: const TextStyle(fontFamily: 'monospace'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            TextFormField(
+              controller: _passwordCtrl,
+              obscureText: _obscurePass,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: 'Encryption password',
+                hintText: 'Tell this password to the receiver',
+                border: const OutlineInputBorder(),
+                suffixIcon: IconButton(
+                  icon: Icon(
+                      _obscurePass ? Icons.visibility : Icons.visibility_off),
+                  onPressed: () =>
+                      setState(() => _obscurePass = !_obscurePass),
+                ),
+              ),
+              validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+            ),
+            const SizedBox(height: 24),
+            if (_error != null) ...[
+              Text(_error!, style: const TextStyle(color: Colors.red)),
+              const SizedBox(height: 12),
+            ],
+            FilledButton.icon(
+              onPressed: _sending ? null : _send,
+              icon: _sending
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Icon(Icons.send),
+              label: const Text('Send'),
+            ),
+          ],
         ),
       ),
     );
   }
+}
+
+class _ScannedTarget {
+  final String ip;
+  final int port;
+
+  const _ScannedTarget({required this.ip, required this.port});
 }

@@ -5,13 +5,13 @@ import '../storage/server_repository.dart';
 import '../vpn/vpn_controller.dart';
 import 'add_server_screen.dart';
 import 'import_invite_screen.dart';
+import 'network_receive_screen.dart';
 import 'server_detail_screen.dart';
 
 class ServerListScreen extends StatefulWidget {
   final VpnController vpn;
-  final LocalHttpServer server;
 
-  const ServerListScreen({super.key, required this.vpn, required this.server});
+  const ServerListScreen({super.key, required this.vpn});
 
   @override
   State<ServerListScreen> createState() => _ServerListScreenState();
@@ -20,18 +20,11 @@ class ServerListScreen extends StatefulWidget {
 class _ServerListScreenState extends State<ServerListScreen> {
   final _repo = ServerRepository();
   List<Server> _servers = [];
-  String? _localIp;
 
   @override
   void initState() {
     super.initState();
     _load();
-    _resolveIp();
-  }
-
-  Future<void> _resolveIp() async {
-    final ip = await LocalHttpServer.localIp();
-    if (mounted) setState(() => _localIp = ip);
   }
 
   Future<void> _load() async {
@@ -50,9 +43,28 @@ class _ServerListScreenState extends State<ServerListScreen> {
   Future<void> _openDetail(Server server) async {
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => ServerDetailScreen(server: server, vpn: widget.vpn)),
+      MaterialPageRoute(
+          builder: (_) => ServerDetailScreen(server: server, vpn: widget.vpn)),
     );
     await _load();
+  }
+
+  Future<void> _receiveFromDevice() async {
+    final payload = await Navigator.push<ReceivedPayload>(
+      context,
+      MaterialPageRoute(builder: (_) => const NetworkReceiveScreen()),
+    );
+    if (payload == null || !mounted) return;
+
+    if (payload.type == 'invite') {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ImportInviteScreen(prefilled: payload.data),
+        ),
+      );
+      await _load();
+    }
   }
 
   Future<void> _delete(Server server) async {
@@ -87,8 +99,13 @@ class _ServerListScreenState extends State<ServerListScreen> {
         centerTitle: true,
         actions: [
           IconButton(
+            icon: const Icon(Icons.wifi),
+            tooltip: 'Receive from device',
+            onPressed: _receiveFromDevice,
+          ),
+          IconButton(
             icon: const Icon(Icons.qr_code_scanner),
-            tooltip: 'Import invite',
+            tooltip: 'Import invite via QR',
             onPressed: () async {
               final imported = await Navigator.push<bool>(
                 context,
@@ -99,26 +116,7 @@ class _ServerListScreenState extends State<ServerListScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          if (_localIp != null)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              child: Row(
-                children: [
-                  const Icon(Icons.wifi, size: 16),
-                  const SizedBox(width: 8),
-                  Text(
-                    'Receiving on $_localIp:${LocalHttpServer.port}',
-                    style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-                  ),
-                ],
-              ),
-            ),
-          Expanded(
-            child: _servers.isEmpty
+      body: _servers.isEmpty
           ? const Center(
               child: Text(
                 'No servers yet.\nTap + to add one.',
@@ -142,9 +140,6 @@ class _ServerListScreenState extends State<ServerListScreen> {
                 );
               },
             ),
-          ),
-        ],
-      ),
       floatingActionButton: FloatingActionButton(
         onPressed: _openAdd,
         child: const Icon(Icons.add),

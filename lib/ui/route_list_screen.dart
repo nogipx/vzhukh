@@ -10,18 +10,17 @@ import '../vpn/vpn_controller.dart';
 import 'export_route_screen.dart';
 import 'import_invite_screen.dart';
 import 'import_route_screen.dart';
+import 'network_receive_screen.dart';
 import 'route_edit_screen.dart';
 import 'send_to_device_screen.dart';
 
 class RouteListScreen extends StatefulWidget {
   final VpnController vpn;
-  final LocalHttpServer server;
   final AppRoutingConfig? routing;
 
   const RouteListScreen({
     super.key,
     required this.vpn,
-    required this.server,
     this.routing,
   });
 
@@ -34,52 +33,41 @@ class _RouteListScreenState extends State<RouteListScreen> {
   final _resolver = RouteResolver(ServerRepository());
 
   List<TunnelRoute> _routes = [];
-  String? _localIp;
 
   @override
   void initState() {
     super.initState();
     _load();
-    _resolveIp();
-    widget.server.received.addListener(_onReceived);
   }
 
-  @override
-  void dispose() {
-    widget.server.received.removeListener(_onReceived);
-    super.dispose();
+  Future<void> _load() async {
+    final routes = await _routeRepo.getRoutes();
+    if (mounted) setState(() => _routes = routes);
   }
 
-  Future<void> _resolveIp() async {
-    final ip = await LocalHttpServer.localIp();
-    if (mounted) setState(() => _localIp = ip);
-  }
-
-  void _onReceived() {
-    final payload = widget.server.received.value;
-    if (payload == null) return;
-    widget.server.received.value = null; // consume
+  Future<void> _receiveFromDevice() async {
+    final payload = await Navigator.push<ReceivedPayload>(
+      context,
+      MaterialPageRoute(builder: (_) => const NetworkReceiveScreen()),
+    );
+    if (payload == null || !mounted) return;
 
     if (payload.type == 'route') {
-      Navigator.push(
+      await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => ImportRouteScreen(prefilled: payload.data),
         ),
-      ).then((_) => _load());
+      );
+      await _load();
     } else if (payload.type == 'invite') {
-      Navigator.push(
+      await Navigator.push(
         context,
         MaterialPageRoute(
           builder: (_) => ImportInviteScreen(prefilled: payload.data),
         ),
       );
     }
-  }
-
-  Future<void> _load() async {
-    final routes = await _routeRepo.getRoutes();
-    if (mounted) setState(() => _routes = routes);
   }
 
   Future<void> _connect(TunnelRoute route) async {
@@ -100,9 +88,7 @@ class _RouteListScreenState extends State<RouteListScreen> {
   Future<void> _openEdit({TunnelRoute? existing}) async {
     await Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => RouteEditScreen(existing: existing),
-      ),
+      MaterialPageRoute(builder: (_) => RouteEditScreen(existing: existing)),
     );
     await _load();
   }
@@ -139,8 +125,13 @@ class _RouteListScreenState extends State<RouteListScreen> {
         centerTitle: true,
         actions: [
           IconButton(
+            icon: const Icon(Icons.wifi),
+            tooltip: 'Receive from device',
+            onPressed: _receiveFromDevice,
+          ),
+          IconButton(
             icon: const Icon(Icons.qr_code_scanner),
-            tooltip: 'Import route',
+            tooltip: 'Import via QR',
             onPressed: () async {
               final imported = await Navigator.push<bool>(
                 context,
@@ -151,76 +142,42 @@ class _RouteListScreenState extends State<RouteListScreen> {
           ),
         ],
       ),
-      body: Column(
-        children: [
-          if (_localIp != null)
-            _ReceiverBanner(ip: _localIp!, port: LocalHttpServer.port),
-          Expanded(
-            child: _routes.isEmpty
-                ? const Center(
-                    child: Text(
-                      'No routes yet.\nTap + to create one.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.grey),
+      body: _routes.isEmpty
+          ? const Center(
+              child: Text(
+                'No routes yet.\nTap + to create one.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey),
+              ),
+            )
+          : ListView.builder(
+              itemCount: _routes.length,
+              itemBuilder: (_, i) {
+                final route = _routes[i];
+                return _RouteTile(
+                  route: route,
+                  vpn: widget.vpn,
+                  onConnect: () => _connect(route),
+                  onEdit: () => _openEdit(existing: route),
+                  onDelete: () => _delete(route),
+                  onExport: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => ExportRouteScreen(route: route),
                     ),
-                  )
-                : ListView.builder(
-                    itemCount: _routes.length,
-                    itemBuilder: (_, i) {
-                      final route = _routes[i];
-                      return _RouteTile(
-                        route: route,
-                        vpn: widget.vpn,
-                        onConnect: () => _connect(route),
-                        onEdit: () => _openEdit(existing: route),
-                        onDelete: () => _delete(route),
-                        onExport: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => ExportRouteScreen(route: route),
-                          ),
-                        ),
-                        onSend: () => Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => SendToDeviceScreen(route: route),
-                          ),
-                        ),
-                      );
-                    },
                   ),
-          ),
-        ],
-      ),
+                  onSend: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => SendToDeviceScreen(route: route),
+                    ),
+                  ),
+                );
+              },
+            ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _openEdit(),
         child: const Icon(Icons.add),
-      ),
-    );
-  }
-}
-
-class _ReceiverBanner extends StatelessWidget {
-  final String ip;
-  final int port;
-
-  const _ReceiverBanner({required this.ip, required this.port});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      color: Theme.of(context).colorScheme.surfaceContainerHighest,
-      child: Row(
-        children: [
-          const Icon(Icons.wifi, size: 16),
-          const SizedBox(width: 8),
-          Text(
-            'Receiving on $ip:$port',
-            style: const TextStyle(fontSize: 12, fontFamily: 'monospace'),
-          ),
-        ],
       ),
     );
   }

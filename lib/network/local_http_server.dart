@@ -77,6 +77,7 @@ class LocalHttpServer {
   /// Sends an encrypted payload to another device.
   static Future<void> sendTo({
     required String host,
+    required int port,
     required String type,
     required String payload,
   }) async {
