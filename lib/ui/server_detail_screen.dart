@@ -83,7 +83,9 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
 
   Future<void> _toggle() async {
     final status = _vpn.status.value;
-    if (status == VpnStatus.connected || status == VpnStatus.reconnecting) {
+    if (status == VpnStatus.connected ||
+        status == VpnStatus.reconnecting ||
+        status == VpnStatus.connecting) {
       await _vpn.disconnect();
       return;
     }
@@ -386,28 +388,29 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
             ValueListenableBuilder(
               valueListenable: _vpn.status,
               builder: (context, status, _) {
-                final isConnecting = status == VpnStatus.connecting ||
-                    status == VpnStatus.reconnecting;
                 final isConnected = status == VpnStatus.connected;
+                final isActive = status == VpnStatus.connecting ||
+                    status == VpnStatus.reconnecting ||
+                    isConnected;
                 return FilledButton.icon(
-                  onPressed: isConnecting ? null : _toggle,
-                  icon: isConnecting
+                  onPressed: _toggle,
+                  icon: (status == VpnStatus.connecting ||
+                          status == VpnStatus.reconnecting)
                       ? const SizedBox(
                           width: 16,
                           height: 16,
                           child: CircularProgressIndicator(
                               strokeWidth: 2, color: Colors.white),
                         )
-                      : Icon(isConnected ? Icons.stop : Icons.play_arrow),
-                  label: Text(isConnected
-                      ? 'Disconnect'
-                      : status == VpnStatus.reconnecting
-                          ? 'Reconnecting...'
-                          : isConnecting
-                              ? 'Connecting...'
-                              : 'Connect'),
+                      : Icon(isActive ? Icons.stop : Icons.play_arrow),
+                  label: Text(switch (status) {
+                    VpnStatus.connected => 'Disconnect',
+                    VpnStatus.connecting => 'Cancel',
+                    VpnStatus.reconnecting => 'Cancel',
+                    _ => 'Connect',
+                  }),
                   style: FilledButton.styleFrom(
-                    backgroundColor: isConnected ? Colors.red : null,
+                    backgroundColor: isActive ? Colors.red : null,
                     padding: const EdgeInsets.symmetric(vertical: 14),
                   ),
                 );
