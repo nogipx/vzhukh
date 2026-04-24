@@ -18,7 +18,7 @@ dependencies:
   pointycastle: ^4.0.0
   qr_flutter: ^4.1.0
   mobile_scanner: ^5.0.0
-  connectivity_plus: ^7.1.1
+  connectivity_plus: ^6.0.0
 
 dev_dependencies:
   flutter_test:
