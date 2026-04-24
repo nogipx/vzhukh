@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../models/app_routing_config.dart';
@@ -30,6 +31,8 @@ class VpnController {
   bool _userDisconnected = false;
   int _retryCount = 0;
   Timer? _retryTimer;
+
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
 
   Future<void> connect(Server server, Connection connection, {AppRoutingConfig? routing}) async {
     if (status.value != VpnStatus.disconnected &&
@@ -76,6 +79,7 @@ class VpnController {
 
       _retryCount = 0;
       status.value = VpnStatus.connected;
+      _startConnectivityMonitor();
     } catch (e) {
       errorMessage.value = e.toString();
       await _cleanupTunnel();
@@ -93,6 +97,7 @@ class VpnController {
     _retryTimer?.cancel();
     _retryTimer = null;
     _retryCount = 0;
+    _stopConnectivityMonitor();
     status.value = VpnStatus.disconnected;
     await _cleanup();
   }
@@ -102,15 +107,39 @@ class VpnController {
     _scheduleReconnect();
   }
 
-  void _scheduleReconnect() {
+  void _startConnectivityMonitor() {
+    _connectivitySub?.cancel();
+    _connectivitySub = Connectivity()
+        .onConnectivityChanged
+        .listen(_onConnectivityChanged);
+  }
+
+  void _stopConnectivityMonitor() {
+    _connectivitySub?.cancel();
+    _connectivitySub = null;
+  }
+
+  void _onConnectivityChanged(List<ConnectivityResult> results) {
+    if (_userDisconnected) return;
+    final hasNetwork = results.any((r) => r != ConnectivityResult.none);
+    if (!hasNetwork) return;
+
+    // Network changed — old socket is stale. Reconnect immediately,
+    // resetting the retry backoff since this is a network switch, not
+    // a repeated server failure.
+    _retryCount = 0;
+    _scheduleReconnect(delay: const Duration(seconds: 1));
+  }
+
+  void _scheduleReconnect({Duration? delay}) {
     if (_userDisconnected) return;
     _retryTimer?.cancel();
 
-    final delay = _retryDelay();
+    final effectiveDelay = delay ?? _retryDelay();
     status.value = VpnStatus.reconnecting;
     errorMessage.value = null;
 
-    _retryTimer = Timer(delay, () async {
+    _retryTimer = Timer(effectiveDelay, () async {
       if (_userDisconnected || _lastServer == null || _lastConnection == null) return;
       _retryCount++;
       await _cleanupTunnel();
@@ -153,6 +182,7 @@ class VpnController {
 
   void dispose() {
     _retryTimer?.cancel();
+    _stopConnectivityMonitor();
     status.dispose();
     errorMessage.dispose();
   }
