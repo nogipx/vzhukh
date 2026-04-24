@@ -115,12 +115,20 @@ class VpnController {
   void _onConnectivityChanged(List<ConnectivityResult> results) {
     if (_userDisconnected) return;
 
+    // Strip VPN results — changes to the VPN layer are caused by our own tunnel.
+    final physical = results.where((r) => r != ConnectivityResult.vpn).toList();
+
     final previous = _lastConnectivity;
-    _lastConnectivity = results;
+    _lastConnectivity = physical;
 
     if (previous == null) return;
 
-    final hasNetwork = results.any((r) => r != ConnectivityResult.none);
+    // React only if the physical network actually changed.
+    final prevSet = previous.toSet();
+    final currSet = physical.toSet();
+    if (prevSet.length == currSet.length && currSet.containsAll(prevSet)) return;
+
+    final hasNetwork = physical.any((r) => r != ConnectivityResult.none);
     if (!hasNetwork) return;
 
     _retryCount = 0;
