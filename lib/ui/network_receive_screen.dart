@@ -18,13 +18,36 @@ class _NetworkReceiveScreenState extends State<NetworkReceiveScreen> {
   bool _scanned = false;
   bool _manualMode = false;
   String? _error;
+  String? _subnet; // e.g. "192.168.1."
 
-  final _ipCtrl = TextEditingController();
+  final _octetCtrl = TextEditingController();
+  final _portCtrl = TextEditingController();
+  final _octetFocus = FocusNode();
+  final _portFocus = FocusNode();
   final _formKey = GlobalKey<FormState>();
 
   @override
+  void initState() {
+    super.initState();
+    _resolveSubnet();
+  }
+
+  Future<void> _resolveSubnet() async {
+    final ip = await LocalHttpServer.localIp();
+    if (ip != null && mounted) {
+      final parts = ip.split('.');
+      if (parts.length == 4) {
+        setState(() => _subnet = '${parts[0]}.${parts[1]}.${parts[2]}.');
+      }
+    }
+  }
+
+  @override
   void dispose() {
-    _ipCtrl.dispose();
+    _octetCtrl.dispose();
+    _portCtrl.dispose();
+    _octetFocus.dispose();
+    _portFocus.dispose();
     super.dispose();
   }
 
@@ -43,11 +66,10 @@ class _NetworkReceiveScreenState extends State<NetworkReceiveScreen> {
 
   Future<void> _fetchManual() async {
     if (!_formKey.currentState!.validate()) return;
-    final parts = _ipCtrl.text.trim().split(':');
-    if (parts.length != 2) return;
-    final ip = parts[0];
-    final port = int.tryParse(parts[1]);
+    final octet = _octetCtrl.text.trim();
+    final port = int.tryParse(_portCtrl.text.trim());
     if (port == null) return;
+    final ip = _subnet != null ? '$_subnet$octet' : octet;
     await _fetch(ip, port);
   }
 
@@ -162,27 +184,67 @@ class _NetworkReceiveScreenState extends State<NetworkReceiveScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              'Enter the address shown on the sending device.',
-              style: TextStyle(color: Colors.grey),
+            Text(
+              _subnet != null
+                  ? 'Subnet detected: $_subnet\nEnter the last octet and port shown on the sending device.'
+                  : 'Enter the full IP and port shown on the sending device.',
+              style: const TextStyle(color: Colors.grey),
             ),
             const SizedBox(height: 24),
-            TextFormField(
-              controller: _ipCtrl,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'Address',
-                hintText: '192.168.1.x:port',
-                border: OutlineInputBorder(),
-              ),
-              validator: (v) {
-                if (v == null || v.trim().isEmpty) return 'Required';
-                final parts = v.trim().split(':');
-                if (parts.length != 2 || int.tryParse(parts[1]) == null) {
-                  return 'Format: ip:port';
-                }
-                return null;
-              },
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_subnet != null) ...[
+                  Padding(
+                    padding: const EdgeInsets.only(top: 16),
+                    child: Text(
+                      _subnet!,
+                      style: const TextStyle(fontFamily: 'monospace', fontSize: 16),
+                    ),
+                  ),
+                ],
+                Expanded(
+                  child: TextFormField(
+                    controller: _octetCtrl,
+                    focusNode: _octetFocus,
+                    autofocus: true,
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.next,
+                    decoration: InputDecoration(
+                      labelText: _subnet != null ? 'Last octet' : 'IP address',
+                      hintText: _subnet != null ? '100' : '192.168.1.100',
+                      border: const OutlineInputBorder(),
+                    ),
+                    onFieldSubmitted: (_) => _portFocus.requestFocus(),
+                    validator: (v) =>
+                        v == null || v.trim().isEmpty ? 'Required' : null,
+                  ),
+                ),
+                const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 8, vertical: 16),
+                  child: Text(':', style: TextStyle(fontSize: 20)),
+                ),
+                SizedBox(
+                  width: 110,
+                  child: TextFormField(
+                    controller: _portCtrl,
+                    focusNode: _portFocus,
+                    keyboardType: TextInputType.number,
+                    textInputAction: TextInputAction.done,
+                    decoration: const InputDecoration(
+                      labelText: 'Port',
+                      hintText: '54321',
+                      border: OutlineInputBorder(),
+                    ),
+                    onFieldSubmitted: (_) => _fetchManual(),
+                    validator: (v) {
+                      if (v == null || v.trim().isEmpty) return 'Required';
+                      if (int.tryParse(v.trim()) == null) return 'Invalid';
+                      return null;
+                    },
+                  ),
+                ),
+              ],
             ),
             const SizedBox(height: 24),
             if (_error != null) ...[
