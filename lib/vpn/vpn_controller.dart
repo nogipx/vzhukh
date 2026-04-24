@@ -39,6 +39,7 @@ class VpnController {
     _retryTimer?.cancel();
     _retryTimer = null;
     _stopConnectivityMonitor();
+    _userDisconnected = true; // prevent onDisconnected from scheduling reconnect during cleanup
     await _cleanupTunnel();
 
     _lastServer = server;
