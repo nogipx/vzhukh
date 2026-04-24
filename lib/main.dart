@@ -60,7 +60,7 @@ class _HomeScreenState extends State<_HomeScreen> {
       body: IndexedStack(
         index: _tab,
         children: [
-          ServerListScreen(vpn: _vpn),
+          ServerListScreen(vpn: _vpn, server: _server),
           RouteListScreen(vpn: _vpn, server: _server),
         ],
       ),
