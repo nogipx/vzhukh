@@ -7,7 +7,10 @@ import '../ssh/invite_codec.dart';
 import '../storage/server_repository.dart';
 
 class ImportInviteScreen extends StatefulWidget {
-  const ImportInviteScreen({super.key});
+  /// Pre-filled encoded payload (e.g. received via local network push).
+  final String? prefilled;
+
+  const ImportInviteScreen({super.key, this.prefilled});
 
   @override
   State<ImportInviteScreen> createState() => _ImportInviteScreenState();
@@ -26,6 +29,15 @@ class _ImportInviteScreenState extends State<ImportInviteScreen> {
   bool _importing = false;
   String? _error;
   String? _scannedData;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.prefilled != null) {
+      _pasteCtrl.text = widget.prefilled!;
+      _scannedData = widget.prefilled;
+    }
+  }
 
   @override
   void dispose() {

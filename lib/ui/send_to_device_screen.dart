@@ -113,7 +113,6 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
               const SizedBox(height: 24),
               TextFormField(
                 controller: _ipCtrl,
-                keyboardType: TextInputType.number,
                 decoration: const InputDecoration(
                   labelText: 'Device IP address',
                   hintText: '192.168.1.x',

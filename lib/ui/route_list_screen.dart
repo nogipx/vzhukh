@@ -8,6 +8,7 @@ import '../storage/server_repository.dart';
 import '../vpn/route_resolver.dart';
 import '../vpn/vpn_controller.dart';
 import 'export_route_screen.dart';
+import 'import_invite_screen.dart';
 import 'import_route_screen.dart';
 import 'route_edit_screen.dart';
 import 'send_to_device_screen.dart';
@@ -66,6 +67,13 @@ class _RouteListScreenState extends State<RouteListScreen> {
           builder: (_) => ImportRouteScreen(prefilled: payload.data),
         ),
       ).then((_) => _load());
+    } else if (payload.type == 'invite') {
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ImportInviteScreen(prefilled: payload.data),
+        ),
+      );
     }
   }
 
