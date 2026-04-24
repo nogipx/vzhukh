@@ -86,7 +86,7 @@ class _AddServerScreenState extends State<AddServerScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Text(
-                'Enter your server credentials. Flume will create a dedicated SSH user and generate a key — your password will not be stored.',
+                'Enter your server credentials. Vzhukh will create a dedicated SSH user and generate a key — your password will not be stored.',
                 style: TextStyle(color: Colors.grey),
               ),
               const SizedBox(height: 24),

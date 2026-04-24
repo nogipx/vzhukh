@@ -71,7 +71,7 @@ class _ServerListScreenState extends State<ServerListScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Flume'),
+        title: const Text('Vzhukh'),
         centerTitle: true,
         actions: [
           IconButton(
