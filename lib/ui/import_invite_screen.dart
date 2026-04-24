@@ -73,7 +73,7 @@ class _ImportInviteScreenState extends State<ImportInviteScreen> {
     });
 
     try {
-      final payload = _codec.decode(raw, password);
+      final payload = await _codec.decodeAsync(raw, password);
 
       final serverId =
           '${payload.host}_${DateTime.now().millisecondsSinceEpoch}';

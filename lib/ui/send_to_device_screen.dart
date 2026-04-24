@@ -113,7 +113,7 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
         label: widget._route!.label,
         hops: hopData,
       );
-      final encoded = _codec.encode(payload, _passwordCtrl.text);
+      final encoded = await _codec.encodeAsync(payload, _passwordCtrl.text);
       await _startServer('route', encoded);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());

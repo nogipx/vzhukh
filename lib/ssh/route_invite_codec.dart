@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:math';
 import 'dart:typed_data';
 
@@ -121,6 +122,12 @@ class RouteInviteCodec {
     final json = jsonDecode(utf8.decode(plaintext)) as Map<String, dynamic>;
     return RouteInvitePayload.fromJson(json);
   }
+
+  Future<String> encodeAsync(RouteInvitePayload payload, String password) =>
+      Isolate.run(() => encode(payload, password));
+
+  Future<RouteInvitePayload> decodeAsync(String encoded, String password) =>
+      Isolate.run(() => decode(encoded, password));
 
   Uint8List _deriveKey(String password, Uint8List salt) {
     final pbkdf2 = PBKDF2KeyDerivator(HMac(SHA256Digest(), 64))

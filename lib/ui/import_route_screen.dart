@@ -74,7 +74,7 @@ class _ImportRouteScreenState extends State<ImportRouteScreen> {
 
     try {
       final payload =
-          _codec.decode(_pasteCtrl.text.trim(), _passwordCtrl.text);
+          await _codec.decodeAsync(_pasteCtrl.text.trim(), _passwordCtrl.text);
 
       final existingServers = await _serverRepo.getServers();
       final hops = <RouteHop>[];

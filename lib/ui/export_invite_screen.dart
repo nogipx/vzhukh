@@ -48,10 +48,14 @@ class _ExportInviteScreenState extends State<ExportInviteScreen> {
     );
   }
 
-  void _generate() {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _error = null);
+  bool _generating = false;
 
+  Future<void> _generate() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() {
+      _error = null;
+      _generating = true;
+    });
     try {
       final payload = InvitePayload(
         host: widget.server.host,
@@ -60,10 +64,12 @@ class _ExportInviteScreenState extends State<ExportInviteScreen> {
         username: widget.connection.username,
         privateKeyPem: widget.connection.privateKeyPem!,
       );
-      final encoded = _codec.encode(payload, _passwordCtrl.text);
-      setState(() => _encoded = encoded);
+      final encoded = await _codec.encodeAsync(payload, _passwordCtrl.text);
+      if (mounted) setState(() => _encoded = encoded);
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _generating = false);
     }
   }
 
@@ -127,8 +133,15 @@ class _ExportInviteScreenState extends State<ExportInviteScreen> {
             ),
             const SizedBox(height: 16),
             FilledButton(
-              onPressed: _generate,
-              child: const Text('Generate QR'),
+              onPressed: _generating ? null : _generate,
+              child: _generating
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white),
+                    )
+                  : const Text('Generate QR'),
             ),
             if (_error != null) ...[
               const SizedBox(height: 12),
