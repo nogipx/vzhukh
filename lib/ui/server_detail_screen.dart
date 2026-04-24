@@ -7,6 +7,7 @@ import '../models/app_routing_config.dart';
 import '../models/connection.dart';
 import '../models/server.dart';
 import '../models/ssh_identity.dart';
+import '../models/tunnel_route.dart';
 import '../ssh/connection_manager.dart';
 import '../storage/server_repository.dart';
 import '../vpn/vpn_controller.dart';
@@ -15,8 +16,9 @@ import 'export_invite_screen.dart';
 
 class ServerDetailScreen extends StatefulWidget {
   final Server server;
+  final VpnController vpn;
 
-  const ServerDetailScreen({super.key, required this.server});
+  const ServerDetailScreen({super.key, required this.server, required this.vpn});
 
   @override
   State<ServerDetailScreen> createState() => _ServerDetailScreenState();
@@ -27,7 +29,6 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
   static const _routingKeyPrefix = 'app_routing_';
 
   final _repo = ServerRepository();
-  final _vpn = VpnController();
 
   List<Connection> _connections = [];
   Connection? _activeConnection;
@@ -82,15 +83,26 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
   }
 
   Future<void> _toggle() async {
-    final status = _vpn.status.value;
+    final status = widget.vpn.status.value;
     if (status == VpnStatus.connected ||
         status == VpnStatus.reconnecting ||
         status == VpnStatus.connecting) {
-      await _vpn.disconnect();
+      await widget.vpn.disconnect();
       return;
     }
     if (_activeConnection == null) return;
-    await _vpn.connect(widget.server, _activeConnection!, routing: _routing);
+    final hop = ResolvedHop(
+      server: widget.server,
+      identity: SshIdentity(
+        id: _activeConnection!.id,
+        serverId: _activeConnection!.serverId,
+        username: _activeConnection!.username,
+        authType: SshAuthType.privateKey,
+        isAdmin: false,
+        privateKeyPem: _activeConnection!.privateKeyPem,
+      ),
+    );
+    await widget.vpn.connect([hop], routing: _routing);
   }
 
   Future<void> _showAddConnectionDialog() async {
@@ -365,19 +377,13 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
   }
 
   @override
-  void dispose() {
-    _vpn.dispose();
-    super.dispose();
-  }
-
-  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: Text(widget.server.nickname)),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          _StatusCard(vpn: _vpn),
+          _StatusCard(vpn: widget.vpn),
           const SizedBox(height: 8),
           if (Platform.isAndroid) ...[
             _AppRoutingTile(routing: _routing, onTap: _openAppPicker),
@@ -386,7 +392,7 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
           if (_activeConnection != null) ...[
             const SizedBox(height: 8),
             ValueListenableBuilder(
-              valueListenable: _vpn.status,
+              valueListenable: widget.vpn.status,
               builder: (context, status, _) {
                 final isConnected = status == VpnStatus.connected;
                 final isActive = status == VpnStatus.connecting ||

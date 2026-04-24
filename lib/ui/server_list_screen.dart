@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import '../models/server.dart';
 import '../storage/server_repository.dart';
+import '../vpn/vpn_controller.dart';
 import 'add_server_screen.dart';
 import 'import_invite_screen.dart';
 import 'server_detail_screen.dart';
 
 class ServerListScreen extends StatefulWidget {
-  const ServerListScreen({super.key});
+  final VpnController vpn;
+
+  const ServerListScreen({super.key, required this.vpn});
 
   @override
   State<ServerListScreen> createState() => _ServerListScreenState();
@@ -38,7 +41,7 @@ class _ServerListScreenState extends State<ServerListScreen> {
   Future<void> _openDetail(Server server) async {
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => ServerDetailScreen(server: server)),
+      MaterialPageRoute(builder: (_) => ServerDetailScreen(server: server, vpn: widget.vpn)),
     );
     await _load();
   }

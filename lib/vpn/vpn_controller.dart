@@ -4,9 +4,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../models/app_routing_config.dart';
-import '../models/connection.dart';
-import '../models/server.dart';
-import '../models/ssh_identity.dart';
+import '../models/tunnel_route.dart';
 import 'ssh_tunnel.dart';
 import 'tun2socks_bindings.dart';
 
@@ -14,7 +12,6 @@ enum VpnStatus { disconnected, connecting, connected, reconnecting, error }
 
 class VpnController {
   static const _channel = MethodChannel('dev.nogipx.vzhukh/vpn');
-
   static const _maxRetryDelay = Duration(seconds: 30);
 
   final ValueNotifier<VpnStatus> status =
@@ -25,8 +22,7 @@ class VpnController {
   int? _tunFd;
   bool _tun2socksRunning = false;
 
-  Server? _lastServer;
-  Connection? _lastConnection;
+  List<ResolvedHop>? _lastHops;
   AppRoutingConfig? _lastRouting;
   bool _userDisconnected = false;
   int _retryCount = 0;
@@ -35,35 +31,30 @@ class VpnController {
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
   List<ConnectivityResult>? _lastConnectivity;
 
-  Future<void> connect(Server server, Connection connection, {AppRoutingConfig? routing}) async {
+  Future<void> connect(
+    List<ResolvedHop> hops, {
+    AppRoutingConfig? routing,
+  }) async {
     _retryTimer?.cancel();
     _retryTimer = null;
     _stopConnectivityMonitor();
     _userDisconnected = true; // prevent onDisconnected from scheduling reconnect during cleanup
     await _cleanupTunnel();
 
-    _lastServer = server;
-    _lastConnection = connection;
+    _lastHops = hops;
     _lastRouting = routing;
     _userDisconnected = false;
     status.value = VpnStatus.connecting;
     errorMessage.value = null;
 
     try {
-      final identity = SshIdentity(
-        id: connection.id,
-        serverId: connection.serverId,
-        username: connection.username,
-        authType: SshAuthType.privateKey,
-        isAdmin: false,
-        privateKeyPem: connection.privateKeyPem,
-      );
-      _tunnel = SshTunnel(server, identity, onDisconnected: _onTunnelDisconnected);
+      _tunnel = SshTunnel(hops, onDisconnected: _onTunnelDisconnected);
       await _tunnel!.start();
 
       if (!Platform.isMacOS) {
+        final firstServer = hops.first.server;
         _tunFd = await _channel.invokeMethod<int>('startVpn', {
-          'sshHost': server.host,
+          'sshHost': firstServer.host,
           'routingMode': routing?.mode.name ?? 'blacklist',
           'routingPackages': routing?.packages ?? [],
         });
@@ -98,7 +89,6 @@ class VpnController {
     _userDisconnected = true;
     _retryTimer?.cancel();
     _retryTimer = null;
-    _retryCount = 0;
     _stopConnectivityMonitor();
     status.value = VpnStatus.disconnected;
     await _cleanup();
@@ -111,7 +101,7 @@ class VpnController {
 
   void _startConnectivityMonitor() {
     _connectivitySub?.cancel();
-    _lastConnectivity = null; // first emission is current state, not a change
+    _lastConnectivity = null;
     _connectivitySub = Connectivity()
         .onConnectivityChanged
         .listen(_onConnectivityChanged);
@@ -128,15 +118,11 @@ class VpnController {
     final previous = _lastConnectivity;
     _lastConnectivity = results;
 
-    // Skip the first emission — it's the current state, not an actual change.
     if (previous == null) return;
 
     final hasNetwork = results.any((r) => r != ConnectivityResult.none);
     if (!hasNetwork) return;
 
-    // Network changed — old socket is stale. Reconnect immediately,
-    // resetting the retry backoff since this is a network switch, not
-    // a repeated server failure.
     _retryCount = 0;
     _scheduleReconnect(delay: const Duration(seconds: 1));
   }
@@ -150,15 +136,15 @@ class VpnController {
     errorMessage.value = null;
 
     _retryTimer = Timer(effectiveDelay, () async {
-      if (_userDisconnected || _lastServer == null || _lastConnection == null) return;
+      if (_userDisconnected || _lastHops == null) return;
       _retryCount++;
       await _cleanupTunnel();
-      await connect(_lastServer!, _lastConnection!, routing: _lastRouting);
+      await connect(_lastHops!, routing: _lastRouting);
     });
   }
 
   Duration _retryDelay() {
-    final seconds = (1 << _retryCount.clamp(0, 5)); // 1, 2, 4, 8, 16, 32 → capped
+    final seconds = (1 << _retryCount.clamp(0, 5));
     return Duration(seconds: seconds).compareTo(_maxRetryDelay) < 0
         ? Duration(seconds: seconds)
         : _maxRetryDelay;
@@ -170,7 +156,6 @@ class VpnController {
     await _cleanupTunnel();
   }
 
-  /// Tears down the tunnel without resetting user-disconnect state or retries.
   Future<void> _cleanupTunnel() async {
     if (_tun2socksRunning) {
       try {
