@@ -25,6 +25,7 @@ class _ImportRouteScreenState extends State<ImportRouteScreen> {
 
   final _pasteCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
+  final _passwordFocus = FocusNode();
   final _formKey = GlobalKey<FormState>();
 
   bool _scanning = false;
@@ -32,6 +33,8 @@ class _ImportRouteScreenState extends State<ImportRouteScreen> {
   bool _importing = false;
   String? _error;
   String? _scannedData;
+
+  bool get _isPrefilled => widget.prefilled != null;
 
   @override
   void initState() {
@@ -46,6 +49,7 @@ class _ImportRouteScreenState extends State<ImportRouteScreen> {
   void dispose() {
     _pasteCtrl.dispose();
     _passwordCtrl.dispose();
+    _passwordFocus.dispose();
     super.dispose();
   }
 
@@ -178,39 +182,58 @@ class _ImportRouteScreenState extends State<ImportRouteScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (_scannedData != null)
+            if (!_isPrefilled) ...[
+              if (_scannedData != null)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 12),
+                  child: Row(
+                    children: [
+                      Icon(Icons.check_circle, color: Colors.green),
+                      SizedBox(width: 8),
+                      Text('QR code scanned'),
+                    ],
+                  ),
+                ),
+              TextFormField(
+                controller: _pasteCtrl,
+                maxLines: 4,
+                textInputAction: TextInputAction.next,
+                onFieldSubmitted: (_) => _passwordFocus.requestFocus(),
+                decoration: const InputDecoration(
+                  labelText: 'Route code',
+                  hintText: 'Paste or scan QR code',
+                  border: OutlineInputBorder(),
+                  alignLabelWithHint: true,
+                ),
+                validator: (v) =>
+                    v == null || v.trim().isEmpty ? 'Required' : null,
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: () => setState(() => _scanning = true),
+                icon: const Icon(Icons.qr_code_scanner),
+                label: const Text('Scan QR code'),
+              ),
+              const SizedBox(height: 16),
+            ] else ...[
               const Padding(
-                padding: EdgeInsets.only(bottom: 12),
+                padding: EdgeInsets.only(bottom: 16),
                 child: Row(
                   children: [
                     Icon(Icons.check_circle, color: Colors.green),
                     SizedBox(width: 8),
-                    Text('QR code scanned'),
+                    Text('Route received. Enter the password.'),
                   ],
                 ),
               ),
-            TextFormField(
-              controller: _pasteCtrl,
-              maxLines: 4,
-              decoration: const InputDecoration(
-                labelText: 'Route code',
-                hintText: 'Paste or scan QR code',
-                border: OutlineInputBorder(),
-                alignLabelWithHint: true,
-              ),
-              validator: (v) =>
-                  v == null || v.trim().isEmpty ? 'Required' : null,
-            ),
-            const SizedBox(height: 12),
-            OutlinedButton.icon(
-              onPressed: () => setState(() => _scanning = true),
-              icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('Scan QR code'),
-            ),
-            const SizedBox(height: 16),
+            ],
             TextFormField(
               controller: _passwordCtrl,
+              focusNode: _passwordFocus,
+              autofocus: _isPrefilled,
               obscureText: _obscurePass,
+              textInputAction: TextInputAction.done,
+              onFieldSubmitted: (_) => _import(),
               decoration: InputDecoration(
                 labelText: 'Route password',
                 border: const OutlineInputBorder(),
