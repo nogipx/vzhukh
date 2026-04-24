@@ -3,7 +3,8 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../models/app_routing_config.dart';
-import '../models/server_config.dart';
+import '../models/server.dart';
+import '../models/ssh_identity.dart';
 import 'ssh_tunnel.dart';
 import 'tun2socks_bindings.dart';
 
@@ -22,31 +23,33 @@ class VpnController {
   int? _tunFd;
   bool _tun2socksRunning = false;
 
-  ServerConfig? _lastConfig;
+  Server? _lastServer;
+  SshIdentity? _lastIdentity;
   AppRoutingConfig? _lastRouting;
   bool _userDisconnected = false;
   int _retryCount = 0;
   Timer? _retryTimer;
 
-  Future<void> connect(ServerConfig config, {AppRoutingConfig? routing}) async {
+  Future<void> connect(Server server, SshIdentity identity, {AppRoutingConfig? routing}) async {
     if (status.value != VpnStatus.disconnected &&
         status.value != VpnStatus.reconnecting) {
       return;
     }
 
-    _lastConfig = config;
+    _lastServer = server;
+    _lastIdentity = identity;
     _lastRouting = routing;
     _userDisconnected = false;
     status.value = VpnStatus.connecting;
     errorMessage.value = null;
 
     try {
-      _tunnel = SshTunnel(config, onDisconnected: _onTunnelDisconnected);
+      _tunnel = SshTunnel(server, identity, onDisconnected: _onTunnelDisconnected);
       await _tunnel!.start();
 
       if (!Platform.isMacOS) {
         _tunFd = await _channel.invokeMethod<int>('startVpn', {
-          'sshHost': config.host,
+          'sshHost': server.host,
           'routingMode': routing?.mode.name ?? 'blacklist',
           'routingPackages': routing?.packages ?? [],
         });
@@ -99,10 +102,10 @@ class VpnController {
     errorMessage.value = null;
 
     _retryTimer = Timer(delay, () async {
-      if (_userDisconnected || _lastConfig == null) return;
+      if (_userDisconnected || _lastServer == null || _lastIdentity == null) return;
       _retryCount++;
       await _cleanupTunnel();
-      await connect(_lastConfig!, routing: _lastRouting);
+      await connect(_lastServer!, _lastIdentity!, routing: _lastRouting);
     });
   }
 

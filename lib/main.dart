@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'ui/home_screen.dart';
+import 'ui/server_list_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,7 +21,7 @@ class VzhukhApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const HomeScreen(),
+      home: const ServerListScreen(),
     );
   }
 }

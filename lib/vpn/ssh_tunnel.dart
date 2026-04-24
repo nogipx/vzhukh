@@ -1,39 +1,39 @@
 import 'dart:async';
 import 'dart:io';
 import 'package:dartssh2/dartssh2.dart';
-import '../models/server_config.dart';
+import '../models/server.dart';
+import '../models/ssh_identity.dart';
 
 /// Opens an SSH connection and runs a SOCKS5 proxy on localhost:2080.
 /// This is the Dart equivalent of `ssh -D 2080 user@host`.
 class SshTunnel {
   static const int socksPort = 2080;
 
-  final ServerConfig config;
+  final Server server;
+  final SshIdentity identity;
   final void Function()? onDisconnected;
 
   SSHClient? _client;
   ServerSocket? _socksServer;
   bool _running = false;
 
-  SshTunnel(this.config, {this.onDisconnected});
+  SshTunnel(this.server, this.identity, {this.onDisconnected});
 
   bool get isRunning => _running;
 
   Future<void> start() async {
     if (_running) return;
 
-    final socket = await SSHSocket.connect(config.host, config.port);
+    final socket = await SSHSocket.connect(server.host, server.port);
 
     _client = SSHClient(
       socket,
-      username: config.username,
-      onPasswordRequest: config.password != null
-          ? () => config.password!
+      username: identity.username,
+      onPasswordRequest: identity.password != null
+          ? () => identity.password!
           : null,
-      identities: config.privateKey != null
-          ? [
-              ...SSHKeyPair.fromPem(config.privateKey!),
-            ]
+      identities: identity.privateKeyPem != null
+          ? [...SSHKeyPair.fromPem(identity.privateKeyPem!)]
           : null,
     );
 
