@@ -1,7 +1,8 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../models/tunnel_route.dart';
 import '../network/local_http_server.dart';
@@ -13,13 +14,13 @@ class SendToDeviceScreen extends StatefulWidget {
   final String? _preEncodedType;
   final String? _preEncoded;
 
-  /// Send a route: builds hop data and encrypts with a password.
+  /// Send a route: encrypts with a password entered by the user.
   const SendToDeviceScreen.route({super.key, required TunnelRoute route})
       : _route = route,
         _preEncodedType = null,
         _preEncoded = null;
 
-  /// Send an already-encrypted payload (e.g. invite generated in export screen).
+  /// Send an already-encrypted payload (e.g. invite from export screen).
   const SendToDeviceScreen.encoded({
     super.key,
     required String type,
@@ -39,33 +40,35 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
   final _formKey = GlobalKey<FormState>();
 
   bool _obscurePass = true;
-  bool _sending = false;
+  bool _preparing = false;
   String? _error;
-  _ScannedTarget? _target;
+
+  // Set once server is started.
+  HttpServer? _server;
+  String? _ip;
+  int? _port;
+  bool _delivered = false;
 
   bool get _needsPassword => widget._route != null;
+  bool get _serving => _server != null;
 
-  String get _title => widget._route != null
-      ? 'Send: ${widget._route!.label}'
-      : 'Send to device';
+  String get _title =>
+      widget._route != null ? 'Send: ${widget._route!.label}' : 'Send to device';
+
+  @override
+  void initState() {
+    super.initState();
+    // Pre-encoded mode: start serving immediately.
+    if (!_needsPassword) {
+      _startServer(widget._preEncodedType!, widget._preEncoded!);
+    }
+  }
 
   @override
   void dispose() {
     _passwordCtrl.dispose();
+    _server?.close(force: true);
     super.dispose();
-  }
-
-  void _onBarcodeDetected(BarcodeCapture capture) {
-    final raw = capture.barcodes.firstOrNull?.rawValue;
-    if (raw == null) return;
-    try {
-      final json = jsonDecode(raw) as Map<String, dynamic>;
-      final ip = json['ip'] as String;
-      final port = json['port'] as int;
-      setState(() => _target = _ScannedTarget(ip: ip, port: port));
-    } catch (_) {
-      // not a valid target QR — keep scanning
-    }
   }
 
   Future<List<RouteHopData>> _buildHopData() async {
@@ -98,92 +101,79 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
     return hops;
   }
 
-  Future<void> _send() async {
-    if (_needsPassword && !_formKey.currentState!.validate()) return;
-    final target = _target!;
-
+  Future<void> _prepare() async {
+    if (!_formKey.currentState!.validate()) return;
     setState(() {
-      _sending = true;
+      _preparing = true;
       _error = null;
     });
-
     try {
-      final String type;
-      final String encoded;
-
-      if (widget._route != null) {
-        final hopData = await _buildHopData();
-        final payload = RouteInvitePayload(
-          label: widget._route!.label,
-          hops: hopData,
-        );
-        encoded = _codec.encode(payload, _passwordCtrl.text);
-        type = 'route';
-      } else {
-        type = widget._preEncodedType!;
-        encoded = widget._preEncoded!;
-      }
-
-      await LocalHttpServer.sendTo(
-        host: target.ip,
-        port: target.port,
-        type: type,
-        payload: encoded,
+      final hopData = await _buildHopData();
+      final payload = RouteInvitePayload(
+        label: widget._route!.label,
+        hops: hopData,
       );
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Sent! Enter the password on the receiving device.'),
-          ),
-        );
-        Navigator.pop(context);
-      }
+      final encoded = _codec.encode(payload, _passwordCtrl.text);
+      await _startServer('route', encoded);
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {
-      if (mounted) setState(() => _sending = false);
+      if (mounted) setState(() => _preparing = false);
     }
+  }
+
+  Future<void> _startServer(String type, String encoded) async {
+    final server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
+    final ip = await LocalHttpServer.localIp();
+    if (!mounted) {
+      await server.close(force: true);
+      return;
+    }
+    setState(() {
+      _server = server;
+      _ip = ip;
+      _port = server.port;
+    });
+
+    final responseBody = jsonEncode({'type': type, 'payload': encoded});
+
+    server.listen(
+      (request) async {
+        if (request.method == 'GET' && request.uri.path == '/payload') {
+          request.response
+            ..statusCode = HttpStatus.ok
+            ..headers.contentType = ContentType.json
+            ..write(responseBody);
+          await request.response.close();
+          if (mounted && !_delivered) {
+            setState(() => _delivered = true);
+            await server.close(force: true);
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('Delivered successfully.')),
+              );
+              Navigator.pop(context);
+            }
+          }
+        } else {
+          request.response.statusCode = HttpStatus.notFound;
+          await request.response.close();
+        }
+      },
+      onError: (_) {},
+      cancelOnError: false,
+    );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text(_title),
-        actions: [
-          if (_target != null)
-            TextButton(
-              onPressed: () => setState(() => _target = null),
-              child: const Text('Rescan'),
-            ),
-        ],
-      ),
-      body: _target == null ? _buildScanner() : _buildForm(),
+      appBar: AppBar(title: Text(_title)),
+      body: _serving ? _buildQr() : _buildPasswordForm(),
     );
   }
 
-  Widget _buildScanner() {
-    return Stack(
-      children: [
-        MobileScanner(onDetect: _onBarcodeDetected),
-        const Positioned(
-          bottom: 40,
-          left: 0,
-          right: 0,
-          child: Center(
-            child: Text(
-              'Scan the QR on the receiving device',
-              style: TextStyle(color: Colors.white, fontSize: 14),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildForm() {
-    final target = _target!;
+  Widget _buildPasswordForm() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Form(
@@ -191,72 +181,94 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.green.withValues(alpha: 0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.green),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.check_circle, color: Colors.green),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${target.ip}:${target.port}',
-                    style: const TextStyle(fontFamily: 'monospace'),
-                  ),
-                ],
-              ),
+            const Text(
+              'Choose a password to encrypt the route. '
+              'You will need to tell it to the receiver.',
+              style: TextStyle(color: Colors.grey),
             ),
-            if (_needsPassword) ...[
-              const SizedBox(height: 24),
-              TextFormField(
-                controller: _passwordCtrl,
-                obscureText: _obscurePass,
-                autofocus: true,
-                decoration: InputDecoration(
-                  labelText: 'Encryption password',
-                  hintText: 'Tell this password to the receiver',
-                  border: const OutlineInputBorder(),
-                  suffixIcon: IconButton(
-                    icon: Icon(_obscurePass
-                        ? Icons.visibility
-                        : Icons.visibility_off),
-                    onPressed: () =>
-                        setState(() => _obscurePass = !_obscurePass),
-                  ),
+            const SizedBox(height: 24),
+            TextFormField(
+              controller: _passwordCtrl,
+              obscureText: _obscurePass,
+              autofocus: true,
+              decoration: InputDecoration(
+                labelText: 'Encryption password',
+                border: const OutlineInputBorder(),
+                suffixIcon: IconButton(
+                  icon: Icon(
+                      _obscurePass ? Icons.visibility : Icons.visibility_off),
+                  onPressed: () =>
+                      setState(() => _obscurePass = !_obscurePass),
                 ),
-                validator: (v) => v == null || v.isEmpty ? 'Required' : null,
               ),
-            ],
+              validator: (v) => v == null || v.isEmpty ? 'Required' : null,
+            ),
             const SizedBox(height: 24),
             if (_error != null) ...[
               Text(_error!, style: const TextStyle(color: Colors.red)),
               const SizedBox(height: 12),
             ],
-            FilledButton.icon(
-              onPressed: _sending ? null : _send,
-              icon: _sending
+            FilledButton(
+              onPressed: _preparing ? null : _prepare,
+              child: _preparing
                   ? const SizedBox(
-                      width: 16,
-                      height: 16,
+                      width: 20,
+                      height: 20,
                       child: CircularProgressIndicator(
                           strokeWidth: 2, color: Colors.white),
                     )
-                  : const Icon(Icons.send),
-              label: const Text('Send'),
+                  : const Text('Generate QR'),
             ),
           ],
         ),
       ),
     );
   }
-}
 
-class _ScannedTarget {
-  final String ip;
-  final int port;
-
-  const _ScannedTarget({required this.ip, required this.port});
+  Widget _buildQr() {
+    final qrData = jsonEncode({'ip': _ip, 'port': _port});
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Scan this QR on the receiving device.',
+              style: TextStyle(color: Colors.grey),
+            ),
+            const SizedBox(height: 24),
+            Container(
+              color: Colors.white,
+              padding: const EdgeInsets.all(12),
+              child: QrImageView(
+                data: qrData,
+                version: QrVersions.auto,
+                size: 260,
+                errorCorrectionLevel: QrErrorCorrectLevel.L,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              '$_ip:$_port',
+              style: const TextStyle(fontSize: 12, fontFamily: 'monospace', color: Colors.grey),
+            ),
+            const SizedBox(height: 24),
+            const Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                SizedBox(width: 12),
+                Text('Waiting for receiving device...'),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
 }
