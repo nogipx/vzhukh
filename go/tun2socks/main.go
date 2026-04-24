@@ -117,7 +117,7 @@ func tun2socks_start(tunFd C.int, socksAddr *C.char) C.int {
 
 	handler := &socksHandler{dialer: dialer}
 
-	stack, err = tun.NewStack("system", tun.StackOptions{
+	stack, err = tun.NewStack("gvisor", tun.StackOptions{
 		Context:    ctx,
 		Tun:        dev,
 		TunOptions: tunOpts,
