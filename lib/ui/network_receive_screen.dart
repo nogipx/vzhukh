@@ -37,7 +37,10 @@ class _NetworkReceiveScreenState extends State<NetworkReceiveScreen> {
     if (ip != null && mounted) {
       final parts = ip.split('.');
       if (parts.length == 4) {
-        setState(() => _subnet = '${parts[0]}.${parts[1]}.${parts[2]}.');
+        setState(() {
+          _subnet = '${parts[0]}.${parts[1]}.';
+          _octetCtrl.text = '${parts[2]}.';
+        });
       }
     }
   }
@@ -66,10 +69,10 @@ class _NetworkReceiveScreenState extends State<NetworkReceiveScreen> {
 
   Future<void> _fetchManual() async {
     if (!_formKey.currentState!.validate()) return;
-    final octet = _octetCtrl.text.trim();
+    final suffix = _octetCtrl.text.trim();
     final port = int.tryParse(_portCtrl.text.trim());
     if (port == null) return;
-    final ip = _subnet != null ? '$_subnet$octet' : octet;
+    final ip = _subnet != null ? '$_subnet$suffix' : suffix;
     await _fetch(ip, port);
   }
 
@@ -186,7 +189,7 @@ class _NetworkReceiveScreenState extends State<NetworkReceiveScreen> {
           children: [
             Text(
               _subnet != null
-                  ? 'Subnet detected: $_subnet\nEnter the last octet and port shown on the sending device.'
+                  ? 'Prefix: $_subnet\nEnter the last two octets and port.'
                   : 'Enter the full IP and port shown on the sending device.',
               style: const TextStyle(color: Colors.grey),
             ),
@@ -211,13 +214,23 @@ class _NetworkReceiveScreenState extends State<NetworkReceiveScreen> {
                     keyboardType: TextInputType.number,
                     textInputAction: TextInputAction.next,
                     decoration: InputDecoration(
-                      labelText: _subnet != null ? 'Last octet' : 'IP address',
-                      hintText: _subnet != null ? '100' : '192.168.1.100',
+                      labelText: _subnet != null ? 'x.y' : 'IP address',
+                      hintText: _subnet != null ? '1.100' : '192.168.1.100',
                       border: const OutlineInputBorder(),
                     ),
                     onFieldSubmitted: (_) => _portFocus.requestFocus(),
-                    validator: (v) =>
-                        v == null || v.trim().isEmpty ? 'Required' : null,
+                    validator: (v) {
+                      if (v == null || v.trim().isEmpty) return 'Required';
+                      if (_subnet != null) {
+                        final parts = v.trim().split('.');
+                        if (parts.length != 2 ||
+                            int.tryParse(parts[0]) == null ||
+                            int.tryParse(parts[1]) == null) {
+                          return 'Format: x.y';
+                        }
+                      }
+                      return null;
+                    },
                   ),
                 ),
                 const Padding(
