@@ -35,10 +35,10 @@ class VpnController {
   StreamSubscription<List<ConnectivityResult>>? _connectivitySub;
 
   Future<void> connect(Server server, Connection connection, {AppRoutingConfig? routing}) async {
-    if (status.value != VpnStatus.disconnected &&
-        status.value != VpnStatus.reconnecting) {
-      return;
-    }
+    _retryTimer?.cancel();
+    _retryTimer = null;
+    _stopConnectivityMonitor();
+    await _cleanupTunnel();
 
     _lastServer = server;
     _lastConnection = connection;
