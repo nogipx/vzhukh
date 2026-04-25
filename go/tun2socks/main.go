@@ -27,6 +27,7 @@ import (
 	"net"
 	"net/netip"
 	"os"
+	"runtime"
 	"sync"
 	"time"
 	"unsafe"
@@ -117,7 +118,11 @@ func tun2socks_start(tunFd C.int, socksAddr *C.char) C.int {
 
 	handler := &socksHandler{dialer: dialer}
 
-	stack, err = tun.NewStack("gvisor", tun.StackOptions{
+	stackName := "gvisor"
+	if runtime.GOARCH == "arm" {
+		stackName = "system"
+	}
+	stack, err = tun.NewStack(stackName, tun.StackOptions{
 		Context:    ctx,
 		Tun:        dev,
 		TunOptions: tunOpts,
