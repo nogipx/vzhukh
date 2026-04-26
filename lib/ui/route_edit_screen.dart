@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 
+import '../models/app_routing_config.dart';
 import '../models/connection.dart';
 import '../models/server.dart';
 import '../models/tunnel_route.dart';
 import '../storage/server_repository.dart';
 import '../storage/route_repository.dart';
+import 'app_picker_screen.dart';
 
 class RouteEditScreen extends StatefulWidget {
   final TunnelRoute? existing;
@@ -24,6 +26,7 @@ class _RouteEditScreenState extends State<RouteEditScreen> {
   final List<({Server? server, Connection? connection})> _hops = [];
 
   List<Server> _servers = [];
+  AppRoutingConfig? _routing;
   bool _saving = false;
 
   @override
@@ -38,6 +41,7 @@ class _RouteEditScreenState extends State<RouteEditScreen> {
 
     if (widget.existing != null) {
       _labelCtrl.text = widget.existing!.label;
+      _routing = widget.existing!.routing;
       for (final hop in widget.existing!.hops) {
         final server = servers.firstWhere((s) => s.id == hop.serverId,
             orElse: () => throw Exception('Server not found'));
@@ -157,10 +161,32 @@ class _RouteEditScreenState extends State<RouteEditScreen> {
                 connectionId: h.connection!.id,
               ))
           .toList(),
+      routing: _routing,
     );
 
     await _routeRepo.saveRoute(route);
     if (mounted) Navigator.pop(context, route);
+  }
+
+  String get _routingSubtitle {
+    final r = _routing;
+    if (r == null || r.packages.isEmpty) return 'All apps (no filter)';
+    final mode = r.mode == AppRoutingMode.whitelist ? 'Whitelist' : 'Blacklist';
+    return '$mode · ${r.packages.length} app${r.packages.length == 1 ? '' : 's'}';
+  }
+
+  Future<void> _openAppPicker() async {
+    final result = await Navigator.push<AppRoutingConfig>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AppPickerScreen(
+          initial: _routing ?? const AppRoutingConfig.empty(),
+        ),
+      ),
+    );
+    if (result != null) {
+      setState(() => _routing = result.packages.isEmpty ? null : result);
+    }
   }
 
   @override
@@ -229,6 +255,16 @@ class _RouteEditScreenState extends State<RouteEditScreen> {
               ),
             ),
           ],
+          const SizedBox(height: 24),
+          const Divider(),
+          const SizedBox(height: 8),
+          ListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('App routing'),
+            subtitle: Text(_routingSubtitle),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: _openAppPicker,
+          ),
         ],
       ),
     );

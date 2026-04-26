@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 
+import 'app_routing_config.dart';
 import 'server.dart';
 import 'ssh_identity.dart';
 
@@ -29,11 +30,13 @@ class TunnelRoute {
   final String id;
   final String label;
   final List<RouteHop> hops;
+  final AppRoutingConfig? routing;
 
   const TunnelRoute({
     required this.id,
     required this.label,
     required this.hops,
+    this.routing,
   });
 
   bool get isValid => hops.isNotEmpty;
@@ -42,6 +45,7 @@ class TunnelRoute {
         'id': id,
         'label': label,
         'hops': hops.map((h) => h.toJson()).toList(),
+        if (routing != null) 'routing': routing!.toJson(),
       };
 
   factory TunnelRoute.fromJson(Map<String, dynamic> json) => TunnelRoute(
@@ -50,12 +54,23 @@ class TunnelRoute {
         hops: (json['hops'] as List)
             .map((h) => RouteHop.fromJson(Map<String, dynamic>.from(h as Map)))
             .toList(),
+        routing: json['routing'] != null
+            ? AppRoutingConfig.fromJson(
+                Map<String, dynamic>.from(json['routing'] as Map))
+            : null,
       );
 
-  TunnelRoute copyWith({String? label, List<RouteHop>? hops}) => TunnelRoute(
+  TunnelRoute copyWith({
+    String? label,
+    List<RouteHop>? hops,
+    AppRoutingConfig? routing,
+    bool clearRouting = false,
+  }) =>
+      TunnelRoute(
         id: id,
         label: label ?? this.label,
         hops: hops ?? this.hops,
+        routing: clearRouting ? null : routing ?? this.routing,
       );
 }
 

@@ -2,7 +2,6 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
-import '../models/app_routing_config.dart';
 import '../models/connection.dart';
 import '../models/server.dart';
 import '../models/tunnel_route.dart';
@@ -21,12 +20,10 @@ import 'send_to_device_screen.dart';
 
 class RouteListScreen extends StatefulWidget {
   final VpnController vpn;
-  final AppRoutingConfig? routing;
 
   const RouteListScreen({
     super.key,
     required this.vpn,
-    this.routing,
   });
 
   @override
@@ -170,7 +167,7 @@ class _RouteListScreenState extends State<RouteListScreen> {
       ));
       return;
     }
-    await widget.vpn.connect(hops, routing: widget.routing);
+    await widget.vpn.connect(hops, routing: route.routing);
   }
 
   Future<void> _openEdit({TunnelRoute? existing}) async {
