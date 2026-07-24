@@ -14,6 +14,7 @@ import '../storage/server_repository.dart';
 import '../vpn/vpn_controller.dart';
 import 'app_picker_screen.dart';
 import 'export_invite_screen.dart';
+import 'send_to_device_screen.dart';
 
 class ServerDetailScreen extends StatefulWidget {
   final Server server;
@@ -559,7 +560,20 @@ class _ConnectionTile extends StatelessWidget {
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (connection.canConnect)
+          if (connection.canConnect) ...[
+            IconButton(
+              icon: const Icon(Icons.tv),
+              tooltip: 'Send to my device',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => SendToDeviceScreen.server(
+                    server: server,
+                    connection: connection,
+                  ),
+                ),
+              ),
+            ),
             IconButton(
               icon: const Icon(Icons.qr_code),
               tooltip: 'Export invite',
@@ -573,6 +587,7 @@ class _ConnectionTile extends StatelessWidget {
                 ),
               ),
             ),
+          ],
           IconButton(
             icon: const Icon(Icons.delete_outline),
             tooltip: 'Revoke',

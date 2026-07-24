@@ -5,6 +5,8 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../models/connection.dart';
+import '../models/server.dart';
 import '../models/tunnel_route.dart';
 import '../network/local_http_server.dart';
 import '../network/payload_transfer.dart';
@@ -14,12 +16,33 @@ import 'scan_qr_screen.dart';
 
 class SendToDeviceScreen extends StatefulWidget {
   final TunnelRoute? _route;
+  final Server? _server;
+  final Connection? _connection;
   final String? _preEncodedType;
   final String? _preEncoded;
 
-  /// Send a route: encrypts with a password entered by the user.
+  /// Send a route over the local network.
   const SendToDeviceScreen.route({super.key, required TunnelRoute route})
       : _route = route,
+        _server = null,
+        _connection = null,
+        _preEncodedType = null,
+        _preEncoded = null;
+
+  /// Send a single server as a one-hop route.
+  ///
+  /// An invite is encrypted with a password because it travels out of band to
+  /// somebody else. Handing a server to your own television over the local
+  /// network is a different matter, and asking for that password on a remote
+  /// is precisely what the TV shell exists to avoid — so the server goes as
+  /// the one-hop route it already is.
+  const SendToDeviceScreen.server({
+    super.key,
+    required Server server,
+    required Connection connection,
+  })  : _route = null,
+        _server = server,
+        _connection = connection,
         _preEncodedType = null,
         _preEncoded = null;
 
@@ -29,6 +52,8 @@ class SendToDeviceScreen extends StatefulWidget {
     required String type,
     required String encoded,
   })  : _route = null,
+        _server = null,
+        _connection = null,
         _preEncodedType = type,
         _preEncoded = encoded;
 
@@ -53,16 +78,49 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
   String? _encoded;
   bool _pushing = false;
 
-  String get _title =>
-      widget._route != null ? 'Send: ${widget._route!.label}' : 'Send to device';
+  String get _title {
+    if (widget._route != null) return 'Send: ${widget._route!.label}';
+    if (widget._server != null) return 'Send: ${widget._server!.nickname}';
+    return 'Send to device';
+  }
 
   @override
   void initState() {
     super.initState();
     if (widget._route != null) {
       _prepareRoute();
+    } else if (widget._server != null) {
+      _prepareServer();
     } else {
       _startServer(widget._preEncodedType!, widget._preEncoded!);
+    }
+  }
+
+  Future<void> _prepareServer() async {
+    setState(() => _preparing = true);
+    try {
+      final server = widget._server!;
+      final connection = widget._connection!;
+      final payload = RouteInvitePayload(
+        label: server.nickname,
+        hops: [
+          RouteHopData(
+            host: server.host,
+            port: server.port,
+            nickname: server.nickname,
+            username: connection.username,
+            privateKeyPem: connection.privateKeyPem!,
+          ),
+        ],
+      );
+      final encoded = base64Url.encode(
+        Uint8List.fromList(utf8.encode(jsonEncode(payload.toJson()))),
+      );
+      await _startServer('route_plain', encoded);
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _preparing = false);
     }
   }
 
