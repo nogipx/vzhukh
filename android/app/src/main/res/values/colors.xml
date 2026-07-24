@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Matches the Flutter scaffold background so the launch window does not
+         flash a different colour before the first frame. -->
+    <color name="vzhukh_background">#FF07171C</color>
+</resources>

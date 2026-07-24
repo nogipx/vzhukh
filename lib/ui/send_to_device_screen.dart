@@ -7,8 +7,10 @@ import 'package:qr_flutter/qr_flutter.dart';
 
 import '../models/tunnel_route.dart';
 import '../network/local_http_server.dart';
+import '../network/payload_transfer.dart';
 import '../ssh/route_invite_codec.dart';
 import '../storage/server_repository.dart';
+import 'scan_qr_screen.dart';
 
 class SendToDeviceScreen extends StatefulWidget {
   final TunnelRoute? _route;
@@ -44,6 +46,12 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
   String? _ip;
   int? _port;
   bool _delivered = false;
+
+  // Kept so the payload can also be pushed to a device that is listening
+  // instead of being fetched from here.
+  String? _type;
+  String? _encoded;
+  bool _pushing = false;
 
   String get _title =>
       widget._route != null ? 'Send: ${widget._route!.label}' : 'Send to device';
@@ -113,7 +121,49 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
     return hops;
   }
 
+  /// Pushes to a device that is waiting for a payload — the television, which
+  /// cannot scan a code itself. The camera work happens here instead.
+  Future<void> _sendToWaitingDevice() async {
+    final type = _type;
+    final encoded = _encoded;
+    if (type == null || encoded == null) return;
+
+    final handshake = await Navigator.push<String>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const ScanQrScreen(
+          title: 'Send to TV',
+          hint: 'Point the camera at the code on the TV.',
+        ),
+      ),
+    );
+    if (handshake == null || !mounted) return;
+
+    setState(() => _pushing = true);
+    try {
+      await const SendPayloadToDevice()(
+        handshake: handshake,
+        type: type,
+        encoded: encoded,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sent to TV.')),
+      );
+      Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _pushing = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Send failed: $e'), backgroundColor: Colors.red),
+        );
+      }
+    }
+  }
+
   Future<void> _startServer(String type, String encoded) async {
+    _type = type;
+    _encoded = encoded;
     final server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
     final ip = await LocalHttpServer.localIp();
     if (!mounted) {
@@ -176,8 +226,20 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
       );
     }
     return Scaffold(
-      appBar: AppBar(title: Text(_title)),
-      body: _buildQr(),
+      appBar: AppBar(
+        title: Text(_title),
+        actions: [
+          if (!_pushing)
+            TextButton.icon(
+              onPressed: _sendToWaitingDevice,
+              icon: const Icon(Icons.tv),
+              label: const Text('Send to TV'),
+            ),
+        ],
+      ),
+      body: _pushing
+          ? const Center(child: CircularProgressIndicator())
+          : _buildQr(),
     );
   }
 

@@ -7,10 +7,10 @@ import '../../storage/server_repository.dart';
 import '../../vpn/import_route_payload.dart';
 import '../../vpn/route_resolver.dart';
 import '../../vpn/vpn_controller.dart';
-import '../network_receive_screen.dart';
 import '../theme/app_theme.dart';
 import 'tv_focusable.dart';
 import 'tv_nav_rail.dart';
+import 'tv_receive_screen.dart';
 
 /// The television shell.
 ///
@@ -71,12 +71,12 @@ class _TvShellState extends State<TvShell> {
   Future<void> _receive() async {
     final payload = await Navigator.push<ReceivedPayload>(
       context,
-      MaterialPageRoute(builder: (_) => const NetworkReceiveScreen()),
+      MaterialPageRoute(builder: (_) => const TvReceiveScreen()),
     );
     if (payload == null || !mounted) return;
 
-    // Anything else is password protected or arrives by QR, neither of which
-    // belongs on a remote control.
+    // Anything else is password protected, and entering a password on a remote
+    // is exactly what this shell avoids.
     if (payload.type != 'route_plain') {
       _toast('Send this one from the phone as a route.', error: true);
       return;
