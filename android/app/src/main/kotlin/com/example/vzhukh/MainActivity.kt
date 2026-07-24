@@ -1,10 +1,12 @@
 package dev.nogipx.vzhukh
 
+import android.app.UiModeManager
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.net.VpnService
@@ -47,6 +49,7 @@ class MainActivity : FlutterActivity() {
                 "startVpn" -> handleStartVpn(call.arguments as? Map<*, *>, result)
                 "stopVpn" -> handleStopVpn(result)
                 "getInstalledApps" -> handleGetInstalledApps(result)
+                "isTv" -> result.success(isTvDevice())
                 else -> result.notImplemented()
             }
         }
@@ -102,6 +105,17 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             result.error("TUN_ERROR", e.message, null)
         }
+    }
+
+    /**
+     * True when running on a TV. Checks the current UI mode first, and falls
+     * back to the leanback feature for boxes that report an odd mode type.
+     */
+    private fun isTvDevice(): Boolean {
+        val uiMode = getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
+        if (uiMode?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION) return true
+        return packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
+            packageManager.hasSystemFeature(PackageManager.FEATURE_TELEVISION)
     }
 
     private fun handleGetInstalledApps(result: MethodChannel.Result) {
