@@ -69,7 +69,6 @@ class VzhukhVpnService : VpnService() {
         for ((addr, prefix) in routesExcluding(excludeIp)) {
             builder.addRoute(addr, prefix)
         }
-        builder.addRoute("::", 0)
 
         routingPackages.forEach { pkg ->
             try {

@@ -41,11 +41,15 @@ build_abi() {
   cd "$GO_SRC"
   go mod download
 
-  GOOS=android \
-  GOARCH="$goarch" \
-  CGO_ENABLED=1 \
-  CC="$clang" \
-  CGO_LDFLAGS="-llog" \
+  local goarm_env=""
+  [ "$goarch" = "arm" ] && goarm_env="GOARM=${GOARM:-7}"
+
+  env GOOS=android \
+      GOARCH="$goarch" \
+      $goarm_env \
+      CGO_ENABLED=1 \
+      CC="$clang" \
+      CGO_LDFLAGS="-llog" \
     go build \
       -buildmode=c-shared \
       -trimpath \
@@ -59,6 +63,7 @@ build_abi() {
 # Android API 21 minimum
 build_abi "arm64-v8a"  "arm64"  "aarch64-linux-android21"
 build_abi "x86_64"     "amd64"  "x86_64-linux-android21"
+GOARM=7 build_abi "armeabi-v7a" "arm" "armv7a-linux-androideabi21"  # 32-bit ARM (Android TV)
 
 echo ""
 echo "Done. Output:"

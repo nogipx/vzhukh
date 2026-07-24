@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(grep:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(export ANDROID_NDK_HOME=\"$HOME/Library/Android/sdk/ndk/30.0.14904198\")",
+      "Bash(./scripts/build_native.sh)"
     ]
   }
 }

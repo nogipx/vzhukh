@@ -27,7 +27,6 @@ import (
 	"net"
 	"net/netip"
 	"os"
-	"runtime"
 	"sync"
 	"time"
 	"unsafe"
@@ -118,11 +117,11 @@ func tun2socks_start(tunFd C.int, socksAddr *C.char) C.int {
 
 	handler := &socksHandler{dialer: dialer}
 
-	stackName := "gvisor"
-	if runtime.GOARCH == "arm" {
-		stackName = "system"
-	}
-	stack, err = tun.NewStack(stackName, tun.StackOptions{
+	// gVisor userspace stack on all arches. The sing-tun "system" stack needs
+	// netfilter/root to redirect TCP, which an unprivileged Android app lacks,
+	// so it silently drops TCP (32-bit ARM devices never loaded sites). gVisor
+	// compiles and runs on 32-bit ARM too, contrary to an earlier assumption.
+	stack, err = tun.NewStack("gvisor", tun.StackOptions{
 		Context:    ctx,
 		Tun:        dev,
 		TunOptions: tunOpts,
