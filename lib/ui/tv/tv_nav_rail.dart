@@ -54,10 +54,12 @@ class TvNavRail extends StatelessWidget {
           for (var i = 0; i < destinations.length; i++)
             Padding(
               padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+              // No autofocus here: the pane's main action is the better place
+              // to land, so a viewer can press OK the moment the app opens.
               child: _RailItem(
                 destination: destinations[i],
                 selected: i == selectedIndex,
-                autofocus: i == selectedIndex,
+                autofocus: false,
                 onPressed: () => onSelected(i),
               ),
             ),

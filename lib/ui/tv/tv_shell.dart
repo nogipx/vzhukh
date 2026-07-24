@@ -44,10 +44,11 @@ class _TvShellState extends State<TvShell> {
   TunnelRoute? _selected;
   int _tab = 0;
 
-  /// The content keeps its own focus scope. Sharing one with the rail let the
-  /// rail hold focus after a tab change, so the pane that just opened was left
-  /// with nothing highlighted and the viewer had no idea where they were.
-  final _contentScope = FocusScopeNode(debugLabel: 'tv-content');
+  /// Focus is handed to whichever control the open pane treats as its starting
+  /// point. This is a plain node rather than a separate [FocusScope] on the
+  /// content: a scope confines directional traversal to itself, which trapped
+  /// the D-pad inside the pane and left no way back to the rail.
+  final _contentFocus = FocusNode(debugLabel: 'tv-content-primary');
 
   @override
   void initState() {
@@ -57,7 +58,7 @@ class _TvShellState extends State<TvShell> {
 
   @override
   void dispose() {
-    _contentScope.dispose();
+    _contentFocus.dispose();
     super.dispose();
   }
 
@@ -66,11 +67,11 @@ class _TvShellState extends State<TvShell> {
     _focusContentSoon();
   }
 
-  /// Hands focus to the pane once it has been laid out, so whatever the pane
-  /// marks as its starting point is what lights up.
+  /// Hands focus to the pane once it has been laid out, so the pane that just
+  /// opened is what lights up.
   void _focusContentSoon() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _contentScope.requestFocus();
+      if (mounted && _contentFocus.canRequestFocus) _contentFocus.requestFocus();
     });
   }
 
@@ -186,24 +187,23 @@ class _TvShellState extends State<TvShell> {
                 onSelected: _selectTab,
               ),
               Expanded(
-                child: FocusScope(
-                  node: _contentScope,
-                  child: _tab == 0
-                      ? _ConnectPane(
-                          vpn: widget.vpn,
-                          route: _selected,
-                          onConnect: _connect,
-                          onReceive: _receive,
-                          onChangeRoute: () => _selectTab(1),
-                        )
-                      : _RoutesPane(
-                          routes: _routes,
-                          selected: _selected,
-                          onConnect: _selectRoute,
-                          onDelete: _deleteRoute,
-                          onReceive: _receive,
-                        ),
-                ),
+                child: _tab == 0
+                    ? _ConnectPane(
+                        vpn: widget.vpn,
+                        route: _selected,
+                        primaryFocus: _contentFocus,
+                        onConnect: _connect,
+                        onReceive: _receive,
+                        onChangeRoute: () => _selectTab(1),
+                      )
+                    : _RoutesPane(
+                        routes: _routes,
+                        selected: _selected,
+                        primaryFocus: _contentFocus,
+                        onConnect: _selectRoute,
+                        onDelete: _deleteRoute,
+                        onReceive: _receive,
+                      ),
               ),
             ],
           ),
@@ -218,6 +218,7 @@ class _ConnectPane extends StatelessWidget {
   const _ConnectPane({
     required this.vpn,
     required this.route,
+    required this.primaryFocus,
     required this.onConnect,
     required this.onReceive,
     required this.onChangeRoute,
@@ -225,6 +226,7 @@ class _ConnectPane extends StatelessWidget {
 
   final VpnController vpn;
   final TunnelRoute? route;
+  final FocusNode primaryFocus;
   final ValueChanged<TunnelRoute> onConnect;
   final VoidCallback onReceive;
   final VoidCallback onChangeRoute;
@@ -235,7 +237,7 @@ class _ConnectPane extends StatelessWidget {
     final current = route;
 
     if (current == null) {
-      return _EmptyState(onReceive: onReceive);
+      return _EmptyState(onReceive: onReceive, primaryFocus: primaryFocus);
     }
 
     return ValueListenableBuilder<VpnStatus>(
@@ -270,6 +272,7 @@ class _ConnectPane extends StatelessWidget {
                 label: live ? 'Disconnect' : 'Connect',
                 icon: live ? Icons.stop_rounded : Icons.play_arrow_rounded,
                 autofocus: true,
+                focusNode: primaryFocus,
                 destructive: live,
                 onPressed: () =>
                     live ? vpn.disconnect() : onConnect(current),
@@ -309,9 +312,10 @@ class _ConnectPane extends StatelessWidget {
 }
 
 class _EmptyState extends StatelessWidget {
-  const _EmptyState({required this.onReceive});
+  const _EmptyState({required this.onReceive, required this.primaryFocus});
 
   final VoidCallback onReceive;
+  final FocusNode primaryFocus;
 
   @override
   Widget build(BuildContext context) {
@@ -346,6 +350,7 @@ class _EmptyState extends StatelessWidget {
               label: 'Receive from phone',
               icon: Icons.wifi,
               autofocus: true,
+              focusNode: primaryFocus,
               onPressed: onReceive,
             ),
           ],
@@ -359,6 +364,7 @@ class _RoutesPane extends StatelessWidget {
   const _RoutesPane({
     required this.routes,
     required this.selected,
+    required this.primaryFocus,
     required this.onConnect,
     required this.onDelete,
     required this.onReceive,
@@ -366,13 +372,16 @@ class _RoutesPane extends StatelessWidget {
 
   final List<TunnelRoute> routes;
   final TunnelRoute? selected;
+  final FocusNode primaryFocus;
   final ValueChanged<TunnelRoute> onConnect;
   final ValueChanged<TunnelRoute> onDelete;
   final VoidCallback onReceive;
 
   @override
   Widget build(BuildContext context) {
-    if (routes.isEmpty) return _EmptyState(onReceive: onReceive);
+    if (routes.isEmpty) {
+      return _EmptyState(onReceive: onReceive, primaryFocus: primaryFocus);
+    }
 
     return ListView(
       padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
@@ -384,6 +393,7 @@ class _RoutesPane extends StatelessWidget {
               route: routes[i],
               active: routes[i].id == selected?.id,
               autofocus: i == 0,
+              focusNode: i == 0 ? primaryFocus : null,
               onPressed: () => onConnect(routes[i]),
               onDelete: () => onDelete(routes[i]),
             ),
@@ -412,6 +422,7 @@ class _RouteCard extends StatelessWidget {
     required this.route,
     required this.active,
     required this.autofocus,
+    required this.focusNode,
     required this.onPressed,
     required this.onDelete,
   });
@@ -419,6 +430,7 @@ class _RouteCard extends StatelessWidget {
   final TunnelRoute route;
   final bool active;
   final bool autofocus;
+  final FocusNode? focusNode;
   final VoidCallback onPressed;
   final VoidCallback onDelete;
 
@@ -433,6 +445,7 @@ class _RouteCard extends StatelessWidget {
         Expanded(
           child: TvFocusable(
             autofocus: autofocus,
+            focusNode: focusNode,
             onPressed: onPressed,
             onLongPress: onDelete,
             child: Container(

@@ -11,6 +11,7 @@ class TvButton extends StatelessWidget {
     required this.onPressed,
     this.icon,
     this.autofocus = false,
+    this.focusNode,
     this.filled = true,
     this.destructive = false,
     this.minWidth = 340,
@@ -20,6 +21,7 @@ class TvButton extends StatelessWidget {
   final VoidCallback onPressed;
   final IconData? icon;
   final bool autofocus;
+  final FocusNode? focusNode;
   final bool filled;
   final bool destructive;
   final double minWidth;
@@ -33,6 +35,7 @@ class TvButton extends StatelessWidget {
 
     return TvFocusable(
       autofocus: autofocus,
+      focusNode: focusNode,
       onPressed: onPressed,
       // A Container with an alignment expands to whatever it is given, which
       // stretches the button across the pane. IntrinsicWidth pins it back to
