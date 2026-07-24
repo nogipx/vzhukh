@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -10,12 +12,15 @@ import '../theme/app_theme.dart';
 /// ring is painted at a constant width and only changes colour, so gaining
 /// focus never reflows the layout around it.
 ///
-/// Still handles taps, so the same widget serves the handheld shell.
+/// A remote has no second button for secondary actions, so holding the centre
+/// key is the conventional way to reach them; [onLongPress] hooks into that.
+/// Taps and long presses still work, so the same widget serves a touchscreen.
 class TvFocusable extends StatefulWidget {
   const TvFocusable({
     super.key,
     required this.child,
     this.onPressed,
+    this.onLongPress,
     this.autofocus = false,
     this.focusNode,
     this.enabled = true,
@@ -27,6 +32,7 @@ class TvFocusable extends StatefulWidget {
 
   final Widget child;
   final VoidCallback? onPressed;
+  final VoidCallback? onLongPress;
   final bool autofocus;
   final FocusNode? focusNode;
   final bool enabled;
@@ -40,44 +46,76 @@ class TvFocusable extends StatefulWidget {
 }
 
 class _TvFocusableState extends State<TvFocusable> {
-  bool _focused = false;
+  static const _longPressDelay = Duration(milliseconds: 500);
 
-  /// TV remotes deliver the centre button as [LogicalKeyboardKey.select],
-  /// which Flutter's default activation shortcuts (enter/space) do not cover.
-  static const Map<ShortcutActivator, Intent> _dpadShortcuts = {
-    SingleActivator(LogicalKeyboardKey.select): ActivateIntent(),
+  /// Keys a remote or keyboard may send for "activate". Flutter's default
+  /// activation shortcuts cover enter and space but not the D-pad centre.
+  static final _activationKeys = <LogicalKeyboardKey>{
+    LogicalKeyboardKey.select,
+    LogicalKeyboardKey.enter,
+    LogicalKeyboardKey.numpadEnter,
+    LogicalKeyboardKey.space,
+    LogicalKeyboardKey.gameButtonA,
   };
 
-  void _activate() {
-    if (!widget.enabled) return;
-    widget.onPressed?.call();
+  bool _focused = false;
+  Timer? _holdTimer;
+  bool _longPressFired = false;
+
+  @override
+  void dispose() {
+    _holdTimer?.cancel();
+    super.dispose();
   }
 
-  void _onHighlight(bool value) {
+  void _onFocusChange(bool value) {
     if (value == _focused) return;
     setState(() => _focused = value);
     widget.onFocusChange?.call(value);
   }
 
+  /// Distinguishes a tap from a hold by timing the key press, since the
+  /// centre key reports only down and up.
+  KeyEventResult _onKey(FocusNode node, KeyEvent event) {
+    if (!widget.enabled || !_activationKeys.contains(event.logicalKey)) {
+      return KeyEventResult.ignored;
+    }
+
+    if (event is KeyDownEvent) {
+      _longPressFired = false;
+      _holdTimer?.cancel();
+      if (widget.onLongPress != null) {
+        _holdTimer = Timer(_longPressDelay, () {
+          _longPressFired = true;
+          widget.onLongPress!.call();
+        });
+      }
+      return KeyEventResult.handled;
+    }
+
+    if (event is KeyUpEvent) {
+      _holdTimer?.cancel();
+      _holdTimer = null;
+      if (!_longPressFired) widget.onPressed?.call();
+      _longPressFired = false;
+      return KeyEventResult.handled;
+    }
+
+    // Swallow repeats so holding does not fire the action over and over.
+    return KeyEventResult.handled;
+  }
+
   @override
   Widget build(BuildContext context) {
-    return FocusableActionDetector(
-      enabled: widget.enabled,
-      autofocus: widget.autofocus,
+    return Focus(
       focusNode: widget.focusNode,
-      shortcuts: _dpadShortcuts,
-      actions: <Type, Action<Intent>>{
-        ActivateIntent: CallbackAction<ActivateIntent>(
-          onInvoke: (_) {
-            _activate();
-            return null;
-          },
-        ),
-      },
-      mouseCursor: SystemMouseCursors.click,
-      onShowFocusHighlight: _onHighlight,
+      autofocus: widget.autofocus,
+      canRequestFocus: widget.enabled,
+      onFocusChange: _onFocusChange,
+      onKeyEvent: _onKey,
       child: GestureDetector(
-        onTap: _activate,
+        onTap: widget.enabled ? widget.onPressed : null,
+        onLongPress: widget.enabled ? widget.onLongPress : null,
         behavior: HitTestBehavior.opaque,
         child: AnimatedScale(
           scale: _focused ? widget.scale : 1,

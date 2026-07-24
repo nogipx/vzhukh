@@ -52,10 +52,24 @@ ThemeData buildAppTheme({required bool tv}) {
 
   if (!tv) return base;
 
+  final textTheme = _tvTextTheme(base.textTheme);
+
   return base.copyWith(
-    textTheme: _tvTextTheme(base.textTheme),
+    textTheme: textTheme,
     splashFactory: NoSplash.splashFactory,
     highlightColor: Colors.transparent,
+    // The default snack bar is a light slab pinned to the very bottom edge,
+    // which clashes with the dark UI and sits inside the region a television
+    // crops. Float it within the safe area and match the surface.
+    snackBarTheme: SnackBarThemeData(
+      behavior: SnackBarBehavior.floating,
+      backgroundColor: scheme.surfaceContainerHighest,
+      contentTextStyle: textTheme.bodyLarge?.copyWith(color: scheme.onSurface),
+      insetPadding: TvInsets.overscan,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.all(Radius.circular(12)),
+      ),
+    ),
   );
 }
 
