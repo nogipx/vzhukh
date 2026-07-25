@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../models/remote_device.dart';
 import '../../remote/adb_identity.dart';
@@ -157,6 +158,69 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
     if (apps != null) return;
   }
 
+  /// Sends text to the focused field on the TV.
+  ///
+  /// Pre-filled from the clipboard, which is the common case: a password or a
+  /// link copied on the phone, going somewhere typing it with a remote would
+  /// be miserable.
+  Future<void> _sendText() async {
+    final remote = _remote;
+    if (remote == null) return;
+
+    final clip = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted) return;
+    final controller = TextEditingController(text: clip?.text ?? '');
+
+    final text = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Send text'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: controller,
+              autofocus: true,
+              maxLines: null,
+              decoration: InputDecoration(
+                hintText: 'Text to type on the TV',
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.content_paste),
+                  tooltip: 'Paste',
+                  onPressed: () async {
+                    final data =
+                        await Clipboard.getData(Clipboard.kTextPlain);
+                    if (data?.text != null) controller.text = data!.text!;
+                  },
+                ),
+              ),
+              onSubmitted: (v) => Navigator.pop(ctx, v),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'Goes to whatever field is focused on the TV.',
+              style: TextStyle(fontSize: 12, color: Colors.grey),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, controller.text),
+            child: const Text('Send'),
+          ),
+        ],
+      ),
+    );
+
+    if (text == null || text.isEmpty) return;
+    await _guard(() => remote.typeText(text));
+  }
+
   Future<void> _installVzhukh() async {
     final remote = _remote;
     if (remote == null) return;
@@ -264,10 +328,12 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
             ],
           ),
         ),
+        // Above the touchpad: these open something rather than steer it, and
+        // keeping them clear of the thumb's working area stops a stray press
+        // from launching an app mid-drag.
+        _buildSystemRow(connected),
         Expanded(child: _buildTouchpad(connected)),
         _buildControls(connected),
-        const SizedBox(height: 12),
-        _buildSystemRow(connected),
         const SizedBox(height: 20),
       ],
     );
@@ -332,10 +398,17 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
     }
 
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 4),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
         children: [
+          RemoteKey(
+            icon: Icons.keyboard_outlined,
+            size: 56,
+            repeats: false,
+            enabled: connected,
+            onPressed: connected ? _sendText : null,
+          ),
           RemoteKey(
             icon: Icons.settings_outlined,
             size: 56,

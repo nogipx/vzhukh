@@ -119,6 +119,19 @@ class TvRemote {
   Future<void> openSettings() =>
       _client.run('am start -a android.settings.SETTINGS');
 
+  /// Types into whatever field has focus on the television.
+  ///
+  /// Not the HID keyboard: its codes are positions on a layout, so anything
+  /// outside the set the TV is currently using — Cyrillic, most obviously —
+  /// would arrive as the wrong letters. `input text` hands the string to the
+  /// system instead. It costs one process launch for the whole string rather
+  /// than one per character, so length barely matters.
+  Future<void> typeText(String text) {
+    if (text.isEmpty) return Future.value();
+    final escaped = text.replaceAll(r'\', r'\\').replaceAll("'", r"'\''");
+    return _client.run("input text '$escaped'");
+  }
+
   // -- apps ------------------------------------------------------------------
 
   /// Lists launchable packages. Labels are not available this cheaply, so the
