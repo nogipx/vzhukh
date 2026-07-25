@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -423,13 +424,16 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
             enabled: connected,
             onPressed: connected ? _showApps : null,
           ),
-          RemoteKey(
-            icon: Icons.download,
-            size: 56,
-            repeats: false,
-            enabled: connected,
-            onPressed: connected ? _installVzhukh : null,
-          ),
+          // Sending Vzhukh to a TV means having an Android package to send,
+          // which only the Android build does.
+          if (Platform.isAndroid)
+            RemoteKey(
+              icon: Icons.download,
+              size: 56,
+              repeats: false,
+              enabled: connected,
+              onPressed: connected ? _installVzhukh : null,
+            ),
         ],
       ),
     );
