@@ -21,8 +21,13 @@ class ImportRoutePayload {
   Future<TunnelRoute> call(String encoded) async {
     final bytes = base64Url.decode(encoded);
     final json = jsonDecode(utf8.decode(bytes)) as Map<String, dynamic>;
-    final payload = RouteInvitePayload.fromJson(json);
+    return fromPayload(RouteInvitePayload.fromJson(json));
+  }
 
+  /// Stores an already decoded payload. Split out so a caller that had to
+  /// decrypt first — a password protected invite — does not have to re-encode
+  /// just to hand it over.
+  Future<TunnelRoute> fromPayload(RouteInvitePayload payload) async {
     final existingServers = await _servers.getServers();
     final hops = <RouteHop>[];
 

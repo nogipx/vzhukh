@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../models/tunnel_route.dart';
 import '../../network/local_http_server.dart';
+import '../../ssh/route_invite_codec.dart';
 import '../../storage/route_repository.dart';
 import '../../storage/server_repository.dart';
 import '../../vpn/import_route_payload.dart';
@@ -13,6 +14,7 @@ import 'tv_confirm_dialog.dart';
 import 'tv_focusable.dart';
 import 'tv_nav_rail.dart';
 import 'tv_receive_screen.dart';
+import 'tv_unlock_screen.dart';
 
 /// The television shell.
 ///
@@ -138,20 +140,12 @@ class _TvShellState extends State<TvShell> {
     );
     if (payload == null || !mounted) return;
 
-    // Anything else is password protected. The phone is told this device is a
-    // TV and should have sent something openable, so reaching here means it
-    // could not — say what to do rather than what went wrong.
-    if (payload.type != 'route_plain') {
-      _toast(
-        'That invite needs a password. Import it on the phone first, '
-        'then send the server or route here.',
-        error: true,
-      );
-      return;
-    }
-
     try {
-      final route = await _importRoute(payload.data);
+      final route = payload.type == 'route_plain'
+          ? await _importRoute(payload.data)
+          : await _importSealed(payload);
+      if (route == null) return;
+
       await _load();
       if (mounted) {
         setState(() => _selected = route);
@@ -160,6 +154,20 @@ class _TvShellState extends State<TvShell> {
     } catch (e) {
       if (mounted) _toast('Import failed: $e', error: true);
     }
+  }
+
+  /// Sealed payloads come from someone else, so the phone cannot swap them for
+  /// an open form on our behalf and the password has to be asked for here.
+  /// Returns null when the viewer backs out.
+  Future<TunnelRoute?> _importSealed(ReceivedPayload payload) async {
+    final decoded = await Navigator.push<RouteInvitePayload>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => TvUnlockScreen(type: payload.type, data: payload.data),
+      ),
+    );
+    if (decoded == null) return null;
+    return _importRoute.fromPayload(decoded);
   }
 
   void _toast(String message, {bool error = false}) {
