@@ -1,0 +1,199 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
+
+import 'adb/adb_client.dart';
+import 'adb/adb_key.dart';
+import 'uhid.dart';
+
+class InstalledApp {
+  const InstalledApp({required this.packageName, required this.label});
+
+  final String packageName;
+  final String label;
+}
+
+/// Drives a television over ADB: a virtual mouse and keyboard, plus the few
+/// commands worth paying a process launch for.
+///
+/// Pointer and key events go through uhid because that is the only path that
+/// is both permitted and fast; launching or installing an app is a one-off
+/// where a slower `am`/`pm` call costs nothing.
+class TvRemote {
+  TvRemote._(this._client, this._mouse, this._keyboard);
+
+  final AdbClient _client;
+  final AdbStream _mouse;
+  final AdbStream _keyboard;
+
+  bool _closed = false;
+
+  static Future<TvRemote> connect({
+    required String host,
+    int port = 5555,
+    required AdbKey key,
+    void Function()? onWaitingForAuth,
+  }) async {
+    final client = await AdbClient.connect(
+      host,
+      port,
+      key,
+      onWaitingForAuth: onWaitingForAuth,
+    );
+
+    final mouse = await _createDevice(client, 'vzhukh-mouse', Uhid.mouseDescriptor);
+    final keyboard =
+        await _createDevice(client, 'vzhukh-keyboard', Uhid.keyboardDescriptor);
+
+    return TvRemote._(client, mouse, keyboard);
+  }
+
+  static Future<AdbStream> _createDevice(
+    AdbClient client,
+    String name,
+    List<int> descriptor,
+  ) async {
+    final stream = await client.open('exec:${Uhid.pipeCommand}');
+    await stream.write(Uhid.create(name, descriptor));
+    // The kernel needs a moment to publish the device before reports land.
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    return stream;
+  }
+
+  // -- pointer ---------------------------------------------------------------
+
+  int _buttons = 0;
+
+  /// Moves the pointer by a relative amount. Values are clamped to what a
+  /// single HID report can carry; callers sending large deltas should split
+  /// them across frames anyway, or the pointer jumps.
+  Future<void> moveBy(int dx, int dy, {int wheel = 0}) =>
+      _mouse.write(Uhid.input([
+        _buttons,
+        _clampSigned(dx),
+        _clampSigned(dy),
+        _clampSigned(wheel),
+      ]));
+
+  Future<void> pressButton(int mask) async {
+    _buttons |= mask;
+    await _mouse.write(Uhid.input([_buttons, 0, 0, 0]));
+  }
+
+  Future<void> releaseButton(int mask) async {
+    _buttons &= ~mask;
+    await _mouse.write(Uhid.input([_buttons, 0, 0, 0]));
+  }
+
+  Future<void> click({int mask = 1}) async {
+    await pressButton(mask);
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    await releaseButton(mask);
+  }
+
+  // -- keys ------------------------------------------------------------------
+
+  Future<void> tapKey(int usage, {int modifiers = 0}) async {
+    await _keyboard.write(Uhid.input([modifiers, 0, usage, 0, 0, 0, 0, 0]));
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    await _keyboard.write(Uhid.input([0, 0, 0, 0, 0, 0, 0, 0]));
+  }
+
+  // -- apps ------------------------------------------------------------------
+
+  /// Lists launchable packages. Labels are not available this cheaply, so the
+  /// package name stands in until the UI asks the TV app for the real one.
+  Future<List<InstalledApp>> listApps() async {
+    final out = await _client.run(
+      'cmd package query-activities '
+      '-a android.intent.action.MAIN '
+      '-c android.intent.category.LEANBACK_LAUNCHER 2>/dev/null '
+      "| grep -o 'packageName=[^ ]*' | sed 's/packageName=//' | sort -u",
+    );
+    final packages = out
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .toSet();
+
+    if (packages.isEmpty) return _listLauncherFallback();
+    return [
+      for (final p in packages) InstalledApp(packageName: p, label: p),
+    ];
+  }
+
+  Future<List<InstalledApp>> _listLauncherFallback() async {
+    final out = await _client.run('pm list packages -3');
+    return [
+      for (final line in out.split('\n'))
+        if (line.startsWith('package:'))
+          InstalledApp(
+            packageName: line.substring(8).trim(),
+            label: line.substring(8).trim(),
+          ),
+    ];
+  }
+
+  Future<void> launch(String packageName) => _client.run(
+        'monkey -p $packageName -c android.intent.category.LEANBACK_LAUNCHER 1 '
+        '|| monkey -p $packageName -c android.intent.category.LAUNCHER 1',
+      );
+
+  /// Copies an APK over and installs it. Used to put Vzhukh itself on a set
+  /// that does not have it yet.
+  Future<String> installApk(Uint8List apk, {String name = 'vzhukh.apk'}) async {
+    final remote = '/data/local/tmp/$name';
+    final push = await _client.open("exec:sh -c 'cat > $remote'");
+    await push.write(apk);
+    await push.close();
+
+    final result = await _client.run('pm install -r -t $remote; rm -f $remote');
+    return result.trim();
+  }
+
+  Future<String> shell(String command) => _client.run(command);
+
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    // Dropping the pipe closes the descriptor, which removes the device.
+    await _mouse.write(Uhid.destroy());
+    await _keyboard.write(Uhid.destroy());
+    await _mouse.close();
+    await _keyboard.close();
+    await _client.close();
+  }
+
+  static int _clampSigned(int v) {
+    final clamped = v.clamp(-127, 127);
+    return clamped < 0 ? 256 + clamped : clamped;
+  }
+}
+
+/// Serialises the key so it survives app restarts — the TV only prompts once
+/// per key, and regenerating would ask the user again every launch.
+class AdbIdentityStore {
+  const AdbIdentityStore(this._read, this._write);
+
+  final Future<String?> Function(String key) _read;
+  final Future<void> Function(String key, String value) _write;
+
+  static const _storageKey = 'adb_identity';
+
+  Future<AdbKey> call() async {
+    final existing = await _read(_storageKey);
+    if (existing != null) {
+      try {
+        return AdbKey.fromJson(existing);
+      } catch (_) {
+        // Corrupt entry: fall through and mint a new one.
+      }
+    }
+    final key = AdbKey.generate();
+    await _write(_storageKey, key.toJson());
+    return key;
+  }
+}
+
+/// Convenience for callers that just want bytes on the wire.
+Uint8List utf8Bytes(String s) => Uint8List.fromList(utf8.encode(s));
