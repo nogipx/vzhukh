@@ -138,9 +138,59 @@ class TvRemote {
         '|| monkey -p $packageName -c android.intent.category.LAUNCHER 1',
       );
 
+  /// Architectures a package carries native code for.
+  ///
+  /// Read by scanning for the directory names rather than parsing the archive:
+  /// zip stores entry paths as plain ASCII, and this avoids a dependency for
+  /// one question with a yes or no answer.
+  static Set<String> abisIn(Uint8List apk) {
+    const known = ['armeabi-v7a', 'armeabi', 'arm64-v8a', 'x86_64', 'x86'];
+    final found = <String>{};
+    for (final abi in known) {
+      if (_contains(apk, 'lib/$abi/')) found.add(abi);
+    }
+    return found;
+  }
+
+  static bool _contains(Uint8List haystack, String needle) {
+    final pattern = needle.codeUnits;
+    final limit = haystack.length - pattern.length;
+    outer:
+    for (var i = 0; i <= limit; i++) {
+      for (var j = 0; j < pattern.length; j++) {
+        if (haystack[i + j] != pattern[j]) continue outer;
+      }
+      return true;
+    }
+    return false;
+  }
+
+  /// What this device can run.
+  Future<List<String>> supportedAbis() async {
+    final out = await _client.run('getprop ro.product.cpu.abilist');
+    return out.trim().split(',').map((a) => a.trim()).where((a) => a.isNotEmpty).toList();
+  }
+
   /// Copies an APK over and installs it. Used to put Vzhukh itself on a set
   /// that does not have it yet.
+  ///
+  /// The architectures are checked first because a mismatch installs happily
+  /// and only fails when the app is opened, which reads as "it just does not
+  /// start" with nothing pointing at the cause.
   Future<String> installApk(Uint8List apk, {String name = 'vzhukh.apk'}) async {
+    final packaged = abisIn(apk);
+    if (packaged.isNotEmpty) {
+      final supported = await supportedAbis();
+      if (supported.isNotEmpty && !packaged.any(supported.contains)) {
+        throw StateError(
+          'This build only has native code for ${packaged.join(', ')}, '
+          'and the device needs ${supported.join(', ')}. '
+          'Install a universal build on the phone — one made with '
+          '`flutter build apk`, not `flutter run`.',
+        );
+      }
+    }
+
     final remote = '/data/local/tmp/$name';
     // `exec:` already runs this through a shell; nesting another breaks the
     // quoting, the same way it did for the uhid pipe.

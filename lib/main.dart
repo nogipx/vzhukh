@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import 'ui/devices/device_list_screen.dart';
 import 'ui/route_list_screen.dart';
 import 'ui/server_list_screen.dart';
 import 'ui/theme/app_theme.dart';
@@ -45,6 +46,7 @@ class VzhukhApp extends StatelessWidget {
 const _destinations = [
   TvNavDestination(icon: Icons.dns_outlined, label: 'Servers'),
   TvNavDestination(icon: Icons.route_outlined, label: 'Routes'),
+  TvNavDestination(icon: Icons.tv_outlined, label: 'Devices'),
 ];
 
 class _HomeScreen extends StatefulWidget {
@@ -75,6 +77,7 @@ class _HomeScreenState extends State<_HomeScreen> {
     return _buildHandheld([
       ServerListScreen(vpn: _vpn),
       RouteListScreen(vpn: _vpn),
+      const DeviceListScreen(),
     ]);
   }
 
