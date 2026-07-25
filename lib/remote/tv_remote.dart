@@ -19,11 +19,12 @@ class InstalledApp {
 /// is both permitted and fast; launching or installing an app is a one-off
 /// where a slower `am`/`pm` call costs nothing.
 class TvRemote {
-  TvRemote._(this._client, this._mouse, this._keyboard);
+  TvRemote._(this._client, this._mouse, this._keyboard, this._consumer);
 
   final AdbClient _client;
   final AdbStream _mouse;
   final AdbStream _keyboard;
+  final AdbStream _consumer;
 
   bool _closed = false;
 
@@ -43,8 +44,10 @@ class TvRemote {
     final mouse = await _createDevice(client, 'vzhukh-mouse', Uhid.mouseDescriptor);
     final keyboard =
         await _createDevice(client, 'vzhukh-keyboard', Uhid.keyboardDescriptor);
+    final consumer =
+        await _createDevice(client, 'vzhukh-consumer', Uhid.consumerDescriptor);
 
-    return TvRemote._(client, mouse, keyboard);
+    return TvRemote._(client, mouse, keyboard, consumer);
   }
 
   static Future<AdbStream> _createDevice(
@@ -97,6 +100,24 @@ class TvRemote {
     await Future<void>.delayed(const Duration(milliseconds: 30));
     await _keyboard.write(Uhid.input([0, 0, 0, 0, 0, 0, 0, 0]));
   }
+
+  /// Presses a consumer key: volume, home, back, media transport.
+  Future<void> tapConsumer(int usage) async {
+    await _consumer.write(Uhid.input([usage & 0xff, (usage >> 8) & 0xff]));
+    await Future<void>.delayed(const Duration(milliseconds: 30));
+    await _consumer.write(Uhid.input([0, 0]));
+  }
+
+  Future<void> home() => tapConsumer(HidConsumer.home);
+  Future<void> back() => tapConsumer(HidConsumer.back);
+  Future<void> volumeUp() => tapConsumer(HidConsumer.volumeUp);
+  Future<void> volumeDown() => tapConsumer(HidConsumer.volumeDown);
+  Future<void> mute() => tapConsumer(HidConsumer.mute);
+
+  /// Opens system settings. No consumer usage covers this, so it costs a
+  /// process launch — acceptable for something pressed once in a while.
+  Future<void> openSettings() =>
+      _client.run('am start -a android.settings.SETTINGS');
 
   // -- apps ------------------------------------------------------------------
 
@@ -208,10 +229,14 @@ class TvRemote {
     if (_closed) return;
     _closed = true;
     // Dropping the pipe closes the descriptor, which removes the device.
-    await _mouse.write(Uhid.destroy());
-    await _keyboard.write(Uhid.destroy());
-    await _mouse.close();
-    await _keyboard.close();
+    for (final stream in [_mouse, _keyboard, _consumer]) {
+      try {
+        await stream.write(Uhid.destroy());
+      } catch (_) {
+        // Already gone; the close below is what matters.
+      }
+      await stream.close();
+    }
     await _client.close();
   }
 

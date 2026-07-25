@@ -39,6 +39,18 @@ abstract final class Uhid {
     0xc0,
   ];
 
+  /// Consumer controls — volume, home, back, media. These live on their own
+  /// usage page rather than the keyboard's, which is why they need a separate
+  /// collection: a boot keyboard simply has no code for "volume up" or "home".
+  /// Report: one 16-bit usage, then zero to release.
+  static const List<int> consumerDescriptor = [
+    0x05, 0x0c, 0x09, 0x01, 0xa1, 0x01, //     Consumer Control
+    0x15, 0x00, 0x26, 0xff, 0x03, //           logical 0..1023
+    0x19, 0x00, 0x2a, 0xff, 0x03, //           usage 0..1023
+    0x75, 0x10, 0x95, 0x01, 0x81, 0x00, //     one 16-bit array field
+    0xc0,
+  ];
+
   /// The command that keeps the device alive: one process holding the
   /// descriptor open and piping whatever arrives straight into the kernel, so
   /// no process is spawned per event.
@@ -91,6 +103,17 @@ abstract final class Uhid {
     out.setRange(0, bytes.length, bytes);
     return out;
   }
+}
+
+/// Consumer page usages. Android maps these to the system keys of the same
+/// name, so volume behaves exactly as it does on the supplied remote.
+abstract final class HidConsumer {
+  static const int volumeUp = 0x00e9;
+  static const int volumeDown = 0x00ea;
+  static const int mute = 0x00e2;
+  static const int playPause = 0x00cd;
+  static const int home = 0x0223;
+  static const int back = 0x0224;
 }
 
 /// HID usage codes, as the keyboard descriptor above reports them.

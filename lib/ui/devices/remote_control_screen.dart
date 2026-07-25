@@ -5,6 +5,7 @@ import '../../remote/adb_identity.dart';
 import '../../remote/own_apk.dart';
 import '../../remote/tv_remote.dart';
 import '../../remote/uhid.dart';
+import 'remote_buttons.dart';
 
 /// Touchpad, buttons and app launcher for one television.
 class RemoteControlScreen extends StatefulWidget {
@@ -264,32 +265,100 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
           ),
         ),
         Expanded(child: _buildTouchpad(connected)),
-        _buildDpad(connected),
-        const SizedBox(height: 8),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Row(
+        _buildControls(connected),
+        const SizedBox(height: 12),
+        _buildSystemRow(connected),
+        const SizedBox(height: 20),
+      ],
+    );
+  }
+
+  /// The cross and the volume column side by side: both are held with the
+  /// thumb, and volume is adjusted while looking at the screen, not the phone.
+  Widget _buildControls(bool connected) {
+    final remote = _remote;
+    void key(Future<void> Function() action) {
+      if (remote != null) action().catchError((_) {});
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          DirectionPad(
+            enabled: connected,
+            onUp: () => key(() => remote!.tapKey(HidKey.up)),
+            onDown: () => key(() => remote!.tapKey(HidKey.down)),
+            onLeft: () => key(() => remote!.tapKey(HidKey.left)),
+            onRight: () => key(() => remote!.tapKey(HidKey.right)),
+            onSelect: () => key(() => remote!.tapKey(HidKey.enter)),
+            onBack: () => key(() => remote!.back()),
+            onHome: () => key(() => remote!.home()),
+          ),
+          Column(
+            mainAxisSize: MainAxisSize.min,
             children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: connected ? _showApps : null,
-                  icon: const Icon(Icons.apps),
-                  label: const Text('Apps'),
-                ),
+              RemoteKey(
+                icon: Icons.volume_up,
+                enabled: connected,
+                onPressed: () => key(() => remote!.volumeUp()),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: connected ? _installVzhukh : null,
-                  icon: const Icon(Icons.download),
-                  label: const Text('Install'),
-                ),
+              const SizedBox(height: 10),
+              RemoteKey(
+                icon: Icons.volume_off,
+                enabled: connected,
+                repeats: false,
+                onPressed: () => key(() => remote!.mute()),
+              ),
+              const SizedBox(height: 10),
+              RemoteKey(
+                icon: Icons.volume_down,
+                enabled: connected,
+                onPressed: () => key(() => remote!.volumeDown()),
               ),
             ],
           ),
-        ),
-        const SizedBox(height: 16),
-      ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSystemRow(bool connected) {
+    final remote = _remote;
+    void act(Future<void> Function() action) {
+      if (remote != null) _guard(action);
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          RemoteKey(
+            icon: Icons.settings_outlined,
+            size: 56,
+            repeats: false,
+            enabled: connected,
+            onPressed: () => act(() => remote!.openSettings()),
+          ),
+          RemoteKey(
+            icon: Icons.apps,
+            size: 56,
+            repeats: false,
+            enabled: connected,
+            onPressed: connected ? _showApps : null,
+          ),
+          RemoteKey(
+            icon: Icons.download,
+            size: 56,
+            repeats: false,
+            enabled: connected,
+            onPressed: connected ? _installVzhukh : null,
+          ),
+        ],
+      ),
     );
   }
 
@@ -323,41 +392,4 @@ class _RemoteControlScreenState extends State<RemoteControlScreen> {
     );
   }
 
-  Widget _buildDpad(bool connected) {
-    Widget key(IconData icon, int usage, {double size = 48}) => IconButton(
-          iconSize: size * 0.5,
-          icon: Icon(icon),
-          onPressed:
-              connected ? () => _guard(() => _remote!.tapKey(usage)) : null,
-        );
-
-    return Column(
-      children: [
-        key(Icons.keyboard_arrow_up, HidKey.up),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            key(Icons.keyboard_arrow_left, HidKey.left),
-            const SizedBox(width: 8),
-            FilledButton(
-              onPressed: connected
-                  ? () => _guard(() => _remote!.tapKey(HidKey.enter))
-                  : null,
-              child: const Text('OK'),
-            ),
-            const SizedBox(width: 8),
-            key(Icons.keyboard_arrow_right, HidKey.right),
-          ],
-        ),
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            key(Icons.keyboard_arrow_down, HidKey.down),
-            const SizedBox(width: 24),
-            key(Icons.arrow_back, HidKey.escape),
-          ],
-        ),
-      ],
-    );
-  }
 }
