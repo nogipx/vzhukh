@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:typed_data';
 
 import 'adb/adb_client.dart';
@@ -143,7 +142,9 @@ class TvRemote {
   /// that does not have it yet.
   Future<String> installApk(Uint8List apk, {String name = 'vzhukh.apk'}) async {
     final remote = '/data/local/tmp/$name';
-    final push = await _client.open("exec:sh -c 'cat > $remote'");
+    // `exec:` already runs this through a shell; nesting another breaks the
+    // quoting, the same way it did for the uhid pipe.
+    final push = await _client.open('exec:cat > $remote');
     await push.write(apk);
     await push.close();
 
@@ -170,30 +171,3 @@ class TvRemote {
   }
 }
 
-/// Serialises the key so it survives app restarts — the TV only prompts once
-/// per key, and regenerating would ask the user again every launch.
-class AdbIdentityStore {
-  const AdbIdentityStore(this._read, this._write);
-
-  final Future<String?> Function(String key) _read;
-  final Future<void> Function(String key, String value) _write;
-
-  static const _storageKey = 'adb_identity';
-
-  Future<AdbKey> call() async {
-    final existing = await _read(_storageKey);
-    if (existing != null) {
-      try {
-        return AdbKey.fromJson(existing);
-      } catch (_) {
-        // Corrupt entry: fall through and mint a new one.
-      }
-    }
-    final key = AdbKey.generate();
-    await _write(_storageKey, key.toJson());
-    return key;
-  }
-}
-
-/// Convenience for callers that just want bytes on the wire.
-Uint8List utf8Bytes(String s) => Uint8List.fromList(utf8.encode(s));

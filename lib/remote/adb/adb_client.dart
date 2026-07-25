@@ -51,7 +51,9 @@ class AdbStream {
     _client._send(
       AdbMessage(AdbMessage.clse, localId, _remoteId, Uint8List(0)),
     );
-    await _output.close();
+    // Not awaited: closing a controller nobody listens to never completes, and
+    // a stream opened only to push data — an APK, a HID report — has no reader.
+    unawaited(_output.close());
   }
 
   void _handleClose() {
@@ -67,7 +69,12 @@ class AdbClient {
   AdbClient._(this._socket, this.maxData);
 
   final Socket _socket;
-  final int maxData;
+
+  /// Largest payload the daemon will accept in one message. It announces this
+  /// in its own CNXN, and it matters: every write waits for an acknowledgement,
+  /// so guessing low turns a large transfer into tens of thousands of
+  /// round-trips.
+  int maxData;
 
   final _reader = AdbMessageReader();
   final _streams = <int, AdbStream>{};
@@ -100,6 +107,7 @@ class AdbClient {
         for (var m = client._reader.next(); m != null; m = client._reader.next()) {
           switch (m.command) {
             case AdbMessage.cnxn:
+              if (m.arg1 > 0) client.maxData = m.arg1;
               if (!ready.isCompleted) ready.complete(client);
 
             case AdbMessage.auth:

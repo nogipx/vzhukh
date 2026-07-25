@@ -49,6 +49,7 @@ class MainActivity : FlutterActivity() {
                 "startVpn" -> handleStartVpn(call.arguments as? Map<*, *>, result)
                 "stopVpn" -> handleStopVpn(result)
                 "getInstalledApps" -> handleGetInstalledApps(result)
+                "getOwnApkPath" -> handleGetOwnApkPath(result)
                 "isTv" -> result.success(isTvDevice())
                 else -> result.notImplemented()
             }
@@ -116,6 +117,22 @@ class MainActivity : FlutterActivity() {
         if (uiMode?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION) return true
         return packageManager.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
             packageManager.hasSystemFeature(PackageManager.FEATURE_TELEVISION)
+    }
+
+    /**
+     * Path to this app's own APK, so it can be pushed to another device
+     * without downloading anything. Split installs would need every piece and
+     * `pm install-multiple`, so they are reported as unsupported rather than
+     * silently installing a base that will not run.
+     */
+    private fun handleGetOwnApkPath(result: MethodChannel.Result) {
+        val info = applicationInfo
+        val splits = info.splitSourceDirs
+        if (splits != null && splits.isNotEmpty()) {
+            result.error("SPLIT_APK", "App is installed as split APKs", null)
+            return
+        }
+        result.success(info.sourceDir)
     }
 
     private fun handleGetInstalledApps(result: MethodChannel.Result) {
