@@ -11,7 +11,37 @@ import 'local_http_server.dart';
 /// a remote is miserable, so for that direction the roles are swapped: the TV
 /// listens and shows its own address, and the phone — which does have a camera
 /// — scans it and pushes.
+/// What a waiting device says about itself when it advertises its address.
+///
+/// The kind matters because a television cannot unlock a password protected
+/// invite: it has no comfortable way to type one. Announcing the kind lets the
+/// sender pick a form the receiver can actually use instead of pushing
+/// something that will be rejected.
+class DeviceHandshake {
+  const DeviceHandshake({required this.ip, required this.port, this.kind});
+
+  final String ip;
+  final int port;
+  final String? kind;
+
+  bool get isTv => kind == 'tv';
+
+  static DeviceHandshake parse(String raw) {
+    final json = jsonDecode(raw) as Map<String, dynamic>;
+    return DeviceHandshake(
+      ip: json['ip'] as String,
+      port: json['port'] as int,
+      kind: json['device'] as String?,
+    );
+  }
+}
+
 class PayloadReceiver {
+  PayloadReceiver({this.deviceKind});
+
+  /// Announced to senders so they can choose a payload this device can use.
+  final String? deviceKind;
+
   HttpServer? _server;
   final _received = Completer<ReceivedPayload>();
 
@@ -25,7 +55,11 @@ class PayloadReceiver {
   Future<ReceivedPayload> get received => _received.future;
 
   /// The contents of the QR code the sending device scans.
-  String get handshake => jsonEncode({'ip': _ip, 'port': _port});
+  String get handshake => jsonEncode({
+        'ip': _ip,
+        'port': _port,
+        if (deviceKind != null) 'device': deviceKind,
+      });
 
   Future<void> start() async {
     final server = await HttpServer.bind(InternetAddress.anyIPv4, 0);
@@ -75,21 +109,16 @@ class PayloadReceiver {
 class SendPayloadToDevice {
   const SendPayloadToDevice();
 
-  /// [handshake] is the JSON carried by the receiver's QR code.
   Future<void> call({
-    required String handshake,
+    required DeviceHandshake target,
     required String type,
     required String encoded,
   }) async {
-    final target = jsonDecode(handshake) as Map<String, dynamic>;
-    final ip = target['ip'] as String;
-    final port = target['port'] as int;
-
     final client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 10);
     try {
-      final request =
-          await client.postUrl(Uri.parse('http://$ip:$port/payload'));
+      final request = await client
+          .postUrl(Uri.parse('http://${target.ip}:${target.port}/payload'));
       request.headers.contentType = ContentType.json;
       request.write(jsonEncode({'type': type, 'payload': encoded}));
 

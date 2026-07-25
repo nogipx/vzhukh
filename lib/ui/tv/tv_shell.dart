@@ -138,10 +138,15 @@ class _TvShellState extends State<TvShell> {
     );
     if (payload == null || !mounted) return;
 
-    // Anything else is password protected, and entering a password on a remote
-    // is exactly what this shell avoids.
+    // Anything else is password protected. The phone is told this device is a
+    // TV and should have sent something openable, so reaching here means it
+    // could not — say what to do rather than what went wrong.
     if (payload.type != 'route_plain') {
-      _toast('Send this one from the phone as a route.', error: true);
+      _toast(
+        'That invite needs a password. Import it on the phone first, '
+        'then send the server or route here.',
+        error: true,
+      );
       return;
     }
 

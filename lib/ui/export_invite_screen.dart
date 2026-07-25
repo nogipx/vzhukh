@@ -43,6 +43,8 @@ class _ExportInviteScreenState extends State<ExportInviteScreen> {
         builder: (_) => SendToDeviceScreen.encoded(
           type: 'invite',
           encoded: encoded,
+          server: widget.server,
+          connection: widget.connection,
         ),
       ),
     );

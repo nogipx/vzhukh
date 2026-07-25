@@ -47,13 +47,19 @@ class SendToDeviceScreen extends StatefulWidget {
         _preEncoded = null;
 
   /// Send an already-encrypted payload (e.g. invite from export screen).
+  ///
+  /// [server] and [connection] are the material the payload was built from.
+  /// Passing them lets the screen fall back to an openable form when the
+  /// receiver turns out to be a device that cannot be asked for a password.
   const SendToDeviceScreen.encoded({
     super.key,
     required String type,
     required String encoded,
+    Server? server,
+    Connection? connection,
   })  : _route = null,
-        _server = null,
-        _connection = null,
+        _server = server,
+        _connection = connection,
         _preEncodedType = type,
         _preEncoded = encoded;
 
@@ -89,34 +95,40 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
     super.initState();
     if (widget._route != null) {
       _prepareRoute();
-    } else if (widget._server != null) {
-      _prepareServer();
-    } else {
+    } else if (widget._preEncoded != null) {
+      // An invite may also carry its source material, so this comes first.
       _startServer(widget._preEncodedType!, widget._preEncoded!);
+    } else {
+      _prepareServer();
     }
+  }
+
+  /// Encodes the server as the one-hop route it already is — the form a
+  /// device without a keyboard can open.
+  String _encodeAsPlainRoute() {
+    final server = widget._server!;
+    final connection = widget._connection!;
+    final payload = RouteInvitePayload(
+      label: server.nickname,
+      hops: [
+        RouteHopData(
+          host: server.host,
+          port: server.port,
+          nickname: server.nickname,
+          username: connection.username,
+          privateKeyPem: connection.privateKeyPem!,
+        ),
+      ],
+    );
+    return base64Url.encode(
+      Uint8List.fromList(utf8.encode(jsonEncode(payload.toJson()))),
+    );
   }
 
   Future<void> _prepareServer() async {
     setState(() => _preparing = true);
     try {
-      final server = widget._server!;
-      final connection = widget._connection!;
-      final payload = RouteInvitePayload(
-        label: server.nickname,
-        hops: [
-          RouteHopData(
-            host: server.host,
-            port: server.port,
-            nickname: server.nickname,
-            username: connection.username,
-            privateKeyPem: connection.privateKeyPem!,
-          ),
-        ],
-      );
-      final encoded = base64Url.encode(
-        Uint8List.fromList(utf8.encode(jsonEncode(payload.toJson()))),
-      );
-      await _startServer('route_plain', encoded);
+      await _startServer('route_plain', _encodeAsPlainRoute());
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {
@@ -179,14 +191,22 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
     return hops;
   }
 
+  void _failed(String message) {
+    if (!mounted) return;
+    setState(() => _pushing = false);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), backgroundColor: Colors.red),
+    );
+  }
+
   /// Pushes to a device that is waiting for a payload — the television, which
   /// cannot scan a code itself. The camera work happens here instead.
   Future<void> _sendToWaitingDevice() async {
-    final type = _type;
-    final encoded = _encoded;
+    var type = _type;
+    var encoded = _encoded;
     if (type == null || encoded == null) return;
 
-    final handshake = await Navigator.push<String>(
+    final raw = await Navigator.push<String>(
       context,
       MaterialPageRoute(
         builder: (_) => const ScanQrScreen(
@@ -195,12 +215,35 @@ class _SendToDeviceScreenState extends State<SendToDeviceScreen> {
         ),
       ),
     );
-    if (handshake == null || !mounted) return;
+    if (raw == null || !mounted) return;
+
+    final DeviceHandshake target;
+    try {
+      target = DeviceHandshake.parse(raw);
+    } catch (_) {
+      _failed('That code is not a Vzhukh device.');
+      return;
+    }
+
+    // A television cannot be asked for a password, so an encrypted invite is
+    // useless to it. When the material is at hand, send the openable one-hop
+    // route instead of making the viewer deal with a rejection.
+    if (target.isTv && type != 'route_plain') {
+      if (widget._server == null || widget._connection == null) {
+        _failed(
+          'A TV cannot open a password protected invite. '
+          'Send the server or a route instead.',
+        );
+        return;
+      }
+      type = 'route_plain';
+      encoded = _encodeAsPlainRoute();
+    }
 
     setState(() => _pushing = true);
     try {
       await const SendPayloadToDevice()(
-        handshake: handshake,
+        target: target,
         type: type,
         encoded: encoded,
       );

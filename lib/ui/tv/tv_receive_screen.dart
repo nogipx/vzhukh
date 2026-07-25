@@ -17,7 +17,9 @@ class TvReceiveScreen extends StatefulWidget {
 }
 
 class _TvReceiveScreenState extends State<TvReceiveScreen> {
-  final _receiver = PayloadReceiver();
+  // Announcing the kind lets the phone send something this set can open
+  // instead of a password protected invite it could never unlock.
+  final _receiver = PayloadReceiver(deviceKind: 'tv');
 
   bool _ready = false;
   String? _error;
