@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Entitlements for a build that runs on machines other than the one it was
+  made on.
+
+  Two things are deliberately absent. The sandbox, because keychain access
+  inside one is granted through an access group derived from the signing team,
+  and an ad-hoc signature has no team to derive it from — stored servers and
+  keys would silently fail to come back. And keychain-access-groups for the
+  same reason: claiming a group belonging to a team this binary is not signed
+  by gets the request refused outright.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+</dict>
+</plist>

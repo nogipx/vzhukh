@@ -86,6 +86,61 @@ dmg: macos
     ls -lh "$out"
     codesign -dvvv "{{macos_app}}" 2>&1 | grep -E 'Authority=Apple Development|Authority=Developer ID|TeamIdentifier' || true
 
+# Build a DMG that runs on machines other than this one
+dmg-portable: macos
+    #!/usr/bin/env bash
+    # A development signature carries a provisioning profile naming the exact
+    # Macs allowed to run the build — everywhere else the system refuses to
+    # launch it at all, which reads as "the application cannot be opened".
+    #
+    # Dropping the profile and signing ad-hoc removes that restriction. What
+    # remains is Gatekeeper's own check, which the recipient clears once by
+    # opening from the context menu. Proper distribution wants a Developer ID
+    # certificate and notarisation instead; see `just notarise-help`.
+    set -euo pipefail
+
+    stage=$(mktemp -d)
+    trap 'rm -rf "$stage"' EXIT
+    cp -R "{{macos_app}}" "$stage/"
+    app="$stage/vzhukh.app"
+
+    rm -f "$app/Contents/embedded.provisionprofile"
+
+    # Nested code first: a bundle's signature covers what is inside it.
+    find "$app/Contents/Frameworks" -name '*.framework' -maxdepth 1 -print0 2>/dev/null |
+        while IFS= read -r -d '' fw; do codesign --force --sign - "$fw"; done
+    find "$app/Contents" \( -name '*.dylib' -o -name '*.so' \) -print0 2>/dev/null |
+        while IFS= read -r -d '' lib; do codesign --force --sign - "$lib"; done
+
+    codesign --force --sign - \
+        --entitlements macos/Runner/Portable.entitlements \
+        "$app"
+    codesign --verify --deep --strict "$app" && echo "signature ok"
+
+    out="build/dist/Vzhukh-{{version}}-portable.dmg"
+    mkdir -p build/dist
+    rm -f "$out"
+    ln -s /Applications "$stage/Applications"
+    hdiutil create -volname "Vzhukh" -srcfolder "$stage" -ov -format UDZO "$out"
+
+    echo
+    ls -lh "$out"
+    echo "On the other Mac: right-click the app, choose Open, confirm once."
+
+# What proper distribution needs
+notarise-help:
+    @echo "Needs a paid Apple Developer account, which the development"
+    @echo "certificate already implies. Then:"
+    @echo
+    @echo "  1. Xcode > Settings > Accounts > Manage Certificates"
+    @echo "     add a 'Developer ID Application' certificate"
+    @echo "  2. Sign the app with it instead of ad-hoc"
+    @echo "  3. xcrun notarytool submit <dmg> --apple-id <id> \\"
+    @echo "       --team-id 3KCLFXFC74 --password <app-specific> --wait"
+    @echo "  4. xcrun stapler staple <dmg>"
+    @echo
+    @echo "Result opens with no warning at all, on any Mac."
+
 # --- TV remote -------------------------------------------------------------
 
 # Exercise the TV remote against a real set
