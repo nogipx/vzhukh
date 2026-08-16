@@ -1,7 +1,6 @@
 import 'dart:isolate';
 
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
-
+import '../storage/secure_store.dart';
 import 'adb/adb_key.dart';
 
 /// Loads the ADB identity, minting one on first use.
@@ -12,12 +11,10 @@ import 'adb/adb_key.dart';
 /// happens off the UI isolate.
 class LoadAdbIdentity {
   const LoadAdbIdentity();
-
-  static const _storage = FlutterSecureStorage();
   static const _key = 'adb_identity';
 
   Future<AdbKey> call() async {
-    final existing = await _storage.read(key: _key);
+    final existing = await secureStore.read(key: _key);
     if (existing != null) {
       try {
         return AdbKey.fromJson(existing);
@@ -27,7 +24,7 @@ class LoadAdbIdentity {
     }
 
     final generated = await Isolate.run(() => AdbKey.generate().toJson());
-    await _storage.write(key: _key, value: generated);
+    await secureStore.write(key: _key, value: generated);
     return AdbKey.fromJson(generated);
   }
 }

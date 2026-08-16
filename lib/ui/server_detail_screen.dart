@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../models/app_routing_config.dart';
 import '../models/connection.dart';
@@ -10,6 +9,7 @@ import '../models/server.dart';
 import '../models/ssh_identity.dart';
 import '../models/tunnel_route.dart';
 import '../ssh/connection_manager.dart';
+import '../storage/secure_store.dart';
 import '../storage/server_repository.dart';
 import '../vpn/vpn_controller.dart';
 import 'app_picker_screen.dart';
@@ -27,7 +27,6 @@ class ServerDetailScreen extends StatefulWidget {
 }
 
 class _ServerDetailScreenState extends State<ServerDetailScreen> {
-  static const _storage = FlutterSecureStorage();
   static const _routingKeyPrefix = 'app_routing_';
 
   final _repo = ServerRepository();
@@ -82,7 +81,7 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
     final own = connections.where((c) => c.canConnect).firstOrNull;
 
     final rawRouting =
-        await _storage.read(key: '$_routingKeyPrefix${widget.server.id}');
+        await secureStore.read(key: '$_routingKeyPrefix${widget.server.id}');
     AppRoutingConfig routing = const AppRoutingConfig.empty();
     if (rawRouting != null) {
       try {
@@ -102,7 +101,7 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
   }
 
   Future<void> _saveRouting(AppRoutingConfig routing) async {
-    await _storage.write(
+    await secureStore.write(
       key: '$_routingKeyPrefix${widget.server.id}',
       value: jsonEncode(routing.toJson()),
     );
