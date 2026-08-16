@@ -46,6 +46,39 @@ abis apk=apk_debug:
     # installing it on a 32-bit TV fails at launch rather than at install.
     @unzip -l "{{apk}}" | grep -oE 'lib/[a-z0-9_-]+/' | sort -u
 
+# --- Go tunnel -------------------------------------------------------------
+
+# Unit tests for the Go tunnel engine. Runs a real SSH server in-process.
+go-test:
+    cd go/tun2socks && go test ./internal/... -race -count=1
+
+# Rebuild the Go tunnel for iOS. Needed after touching go/.
+native-ios:
+    ./scripts/build_ios.sh
+
+# --- iOS -------------------------------------------------------------------
+
+# Add the packet tunnel extension to the Xcode project.
+# Needs a paid Apple Developer Program membership: packet-tunnel-provider is
+# not available to a free Personal Team, and without it the app will not sign.
+ios-tunnel-on:
+    ruby scripts/setup_ios_extension.rb
+
+# Take the extension back out, leaving an app that builds on a free account.
+ios-tunnel-off:
+    ruby scripts/setup_ios_extension.rb remove
+
+ios:
+    fvm flutter build ios --release
+
+# Drive the SSH chain against a real server, with no TUN and no iOS involved.
+# Proves the half of the iOS tunnel that Apple has nothing to do with.
+#
+#   just tunnel-test -host 1.2.3.4 -user root -password hunter2
+#   just tunnel-test -config chain.json -socks 127.0.0.1:2080
+tunnel-test *args:
+    cd go/tun2socks && go run ./cmd/tunneltest {{args}}
+
 # --- macOS -----------------------------------------------------------------
 
 macos:

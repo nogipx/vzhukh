@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import '../models/app_routing_config.dart';
 import '../models/tunnel_route.dart';
+import 'ios_vpn_bridge.dart';
 import 'ssh_tunnel.dart';
 import 'tun2socks_bindings.dart';
 
@@ -21,6 +22,11 @@ class VpnController {
   SshTunnel? _tunnel;
   int? _tunFd;
   bool _tun2socksRunning = false;
+
+  /// On iOS none of the three fields above are ever set: the tunnel lives in a
+  /// NetworkExtension, and this class only asks it to start and stop.
+  final IosVpnBridge _ios = IosVpnBridge();
+  StreamSubscription<IosTunnelStatus>? _iosStatusSub;
 
   List<ResolvedHop>? _lastHops;
   AppRoutingConfig? _lastRouting;
@@ -46,6 +52,14 @@ class VpnController {
     _userDisconnected = false;
     status.value = VpnStatus.connecting;
     errorMessage.value = null;
+
+    if (Platform.isIOS) {
+      // [routing] is deliberately not applied. iOS has no equivalent of
+      // VpnService's allowed and disallowed package lists outside of MDM, so
+      // the tunnel is always system-wide there.
+      await _connectIos(hops);
+      return;
+    }
 
     try {
       _tunnel = SshTunnel(hops, onDisconnected: _onTunnelDisconnected);
@@ -92,6 +106,42 @@ class VpnController {
     _stopConnectivityMonitor();
     status.value = VpnStatus.disconnected;
     await _cleanup();
+  }
+
+  /// Hands the whole chain to the extension and then only watches.
+  ///
+  /// No retry loop here on purpose: the extension reconnects itself, because
+  /// when the connection drops with the phone in a pocket there is no app
+  /// running to notice, and two things retrying would fight.
+  Future<void> _connectIos(List<ResolvedHop> hops) async {
+    _listenToIosStatus();
+
+    try {
+      await _ios.start(hops);
+    } catch (e) {
+      errorMessage.value = e.toString();
+      status.value = VpnStatus.error;
+    }
+  }
+
+  void _listenToIosStatus() {
+    _iosStatusSub ??= _ios.status.listen((tunnelStatus) {
+      switch (tunnelStatus) {
+        case IosTunnelStatus.connecting:
+          status.value = VpnStatus.connecting;
+        case IosTunnelStatus.connected:
+          errorMessage.value = null;
+          status.value = VpnStatus.connected;
+        case IosTunnelStatus.reasserting:
+          // The extension is rebuilding the chain under a connection the
+          // system still considers up.
+          status.value = VpnStatus.reconnecting;
+        case IosTunnelStatus.disconnecting:
+        case IosTunnelStatus.disconnected:
+        case IosTunnelStatus.invalid:
+          status.value = VpnStatus.disconnected;
+      }
+    });
   }
 
   void _onTunnelDisconnected() {
@@ -165,6 +215,13 @@ class VpnController {
   }
 
   Future<void> _cleanupTunnel() async {
+    if (Platform.isIOS) {
+      try {
+        await _ios.stop();
+      } catch (_) {}
+      return;
+    }
+
     if (_tun2socksRunning) {
       try {
         Tun2SocksBindings.instance.stop();
@@ -186,6 +243,7 @@ class VpnController {
   void dispose() {
     _retryTimer?.cancel();
     _stopConnectivityMonitor();
+    _iosStatusSub?.cancel();
     status.dispose();
     errorMessage.dispose();
   }

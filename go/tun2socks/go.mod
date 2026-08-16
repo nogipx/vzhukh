@@ -5,7 +5,9 @@ go 1.25.0
 require (
 	github.com/sagernet/sing v0.8.2
 	github.com/sagernet/sing-tun v0.8.6
+	golang.org/x/crypto v0.49.0
 	golang.org/x/net v0.52.0
+	golang.org/x/sys v0.42.0
 )
 
 require (
@@ -24,6 +26,5 @@ require (
 	go4.org/netipx v0.0.0-20231129151722-fdeea329fbba // indirect
 	golang.org/x/exp v0.0.0-20240613232115-7f521ea00fb8 // indirect
 	golang.org/x/sync v0.8.0 // indirect
-	golang.org/x/sys v0.42.0 // indirect
 	golang.org/x/time v0.11.0 // indirect
 )
