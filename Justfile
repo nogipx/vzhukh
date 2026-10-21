@@ -181,6 +181,7 @@ dmg: macos
             --hide-extension "vzhukh.app" \
             --app-drop-link 450 180 \
             --no-internet-enable \
+            --skip-jenkins \
             "$out" "$stage"
     else
         # Plain image: no layout, but no extra tool either.
