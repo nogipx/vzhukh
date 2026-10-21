@@ -1,0 +1,4 @@
+module VzhukhTunnelCore {
+    header "libvzhukhtunnel.h"
+    export *
+}

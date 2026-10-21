@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- Master artwork: single-colour silhouette of the wizard cat. Android
+       reads only its alpha (notification icon, themed launcher icon). -->
+  <defs>
+    <mask id="cutouts">
+      <rect x="-50" y="-50" width="200" height="200" fill="#fff"/>
+      <path d="M28 63 Q35 60 42 63 Q35 67.5 28 63 Z M50 63 Q57 60 64 63 Q57 67.5 50 63 Z" fill="#000"/>
+      <path d="M28 47 Q47 39 66 42 L57 4 Z" fill="#000" stroke="#000" stroke-width="7" stroke-linejoin="round"/>
+      <path d="M8 98 L84 66" stroke="#000" stroke-width="13"/>
+    </mask>
+    <path id="star" stroke-width=".18" stroke-linejoin="round"
+          d="M0 -1 L.265 -.364 L.951 -.309 L.428 .139 L.588 .809 L0 .45 L-.588 .809 L-.428 .139 L-.951 -.309 L-.265 -.364 Z"/>
+  </defs>
+
+  <g fill="#fff" stroke="#fff">
+    <g transform="translate(-2 6) scale(.9)">
+      <g mask="url(#cutouts)" stroke="none">
+        <path d="M18 58 L22 30 L40 44 Z"/><path d="M58 42 L72 28 L76 56 Z"/>
+        <path d="M12 68 Q12 44 46 44 Q80 44 80 68 Q80 90 46 90 Q12 90 12 68 Z"/>
+      </g>
+      <path d="M28 47 Q47 39 66 42 L57 4 Z" stroke="none"/>
+      <path d="M8 98 L70 71.6" stroke-width="6.5"/>
+      <path d="M74.5 70 L84 66" stroke-width="6.5"/>
+    </g>
+    <use href="#star" transform="translate(80 50) scale(5.45)"/>
+    <use href="#star" transform="translate(90 40) scale(4.55)"/>
+    <use href="#star" transform="translate(88 62) scale(4.09)"/>
+  </g>
+</svg>

@@ -1,0 +1,35 @@
+name: vzhukh
+description: "Routes traffic through your own SSH servers."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.9
+  dartssh2: ^2.16.0
+  ffi: ^2.2.0
+  flutter_secure_storage: ^10.0.0
+  pinenacl: ^0.6.0
+  pointycastle: ^4.0.0
+  qr_flutter: ^4.1.0
+  mobile_scanner: ^7.0.0
+  connectivity_plus: ^6.0.0
+  bonsoir: ^7.1.5
+  file_selector: ^1.1.0
+  share_plus: ^13.3.1
+  path_provider: ^2.1.6
+  local_auth: ^3.0.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  flutter_launcher_icons: ^0.14.4
+
+flutter:
+  uses-material-design: true

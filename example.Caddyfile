@@ -1,0 +1,20 @@
+# Option 1: With a domain (automatic Let's Encrypt TLS)
+# Use: wss://yourdomain.com/tunnel
+#
+# yourdomain.com {
+#     handle /tunnel {
+#         reverse_proxy 127.0.0.1:22
+#     }
+# }
+
+# Option 2: IP only, self-signed certificate
+# Use: wss://<server-ip>/tunnel  +  enable "Skip TLS verification" in app
+{
+    local_certs
+}
+
+:443 {
+    handle /tunnel {
+        reverse_proxy 127.0.0.1:22
+    }
+}

@@ -1,0 +1,32 @@
+# App icons. Inputs are rendered by scripts/build_icons.sh — run `just icons`
+# rather than flutter_launcher_icons directly.
+flutter_launcher_icons:
+  image_path: "assets/branding/out/icon.png"
+
+  android: true
+  min_sdk_android: 21
+  adaptive_icon_background: "#FFC93D"
+  adaptive_icon_foreground: "assets/branding/out/adaptive_foreground.png"
+  adaptive_icon_foreground_inset: 0
+  adaptive_icon_monochrome: "assets/branding/out/adaptive_monochrome.png"
+
+  ios: true
+  remove_alpha_ios: true
+  background_color_ios: "#FFC93D"
+  image_path_ios_dark_transparent: "assets/branding/out/ios_dark.png"
+  image_path_ios_tinted_grayscale: "assets/branding/out/ios_tinted.png"
+
+  web:
+    generate: true
+    image_path: "assets/branding/out/icon.png"
+    background_color: "#FFC93D"
+    theme_color: "#FFC93D"
+
+  windows:
+    generate: true
+    image_path: "assets/branding/out/plate.png"
+    icon_size: 256
+
+  macos:
+    generate: true
+    image_path: "assets/branding/out/plate.png"

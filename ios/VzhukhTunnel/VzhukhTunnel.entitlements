@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  packet-tunnel-provider is the entitlement that makes any of this possible,
+  and it is the one a free Personal Team cannot have: it needs membership in
+  the Apple Developer Program. Without it the extension will not sign, let
+  alone run.
+
+  The keychain group is how the extension reads the SSH credentials the app
+  saved, since the two are separate processes.
+-->
+<plist version="1.0">
+<dict>
+	<key>com.apple.developer.networking.networkextension</key>
+	<array>
+		<string>packet-tunnel-provider</string>
+	</array>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.dev.nogipx.vzhukh</string>
+	</array>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)dev.nogipx.vzhukh</string>
+	</array>
+</dict>
+</plist>
