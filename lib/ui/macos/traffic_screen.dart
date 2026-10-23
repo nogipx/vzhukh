@@ -12,6 +12,7 @@ import '../../storage/helper_settings.dart';
 import '../../storage/routing_rules_repository.dart';
 import '../../vpn/macos_daemon_backend.dart';
 import '../../vpn/vpn_controller.dart';
+import '../about.dart';
 import '../action_sheet.dart';
 import '../common/widgets.dart';
 import '../set_transfer.dart';
@@ -977,6 +978,7 @@ class _HelperCard extends StatefulWidget {
 
 class _HelperCardState extends State<_HelperCard> {
   String? _bundledVersion;
+  String? _appVersion;
   bool _busy = false;
   bool _leaveOtherVpns = false;
 
@@ -984,6 +986,9 @@ class _HelperCardState extends State<_HelperCard> {
   void initState() {
     super.initState();
     _readBundledVersion();
+    appVersion().then((v) {
+      if (mounted) setState(() => _appVersion = v);
+    });
     const HelperSettings().leaveOtherVpns().then((v) {
       if (mounted) setState(() => _leaveOtherVpns = v);
     });
@@ -1083,7 +1088,23 @@ class _HelperCardState extends State<_HelperCard> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(child: body),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      body,
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(
+                        'Vzhukh ${_appVersion ?? '…'} · helper '
+                        '${status == null ? 'not running' : 'v${status.version}'}'
+                        '${outdated ? ', v$_bundledVersion comes with this app' : ''}',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            ),
+                      ),
+                    ],
+                  ),
+                ),
                 const SizedBox(width: AppSpacing.md),
                 if (_busy)
                   const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))

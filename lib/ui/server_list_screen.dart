@@ -7,6 +7,7 @@ import '../storage/server_repository.dart';
 import '../sync/sync_signal.dart';
 import '../vpn/connect_target.dart';
 import '../vpn/vpn_controller.dart';
+import 'about.dart';
 import 'action_sheet.dart';
 import 'add_server_screen.dart';
 import 'export_route_screen.dart';
@@ -144,6 +145,13 @@ class _ServerListScreenState extends State<ServerListScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Vzhukh'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.info_outline),
+            tooltip: 'About Vzhukh',
+            onPressed: () => showAbout(context, widget.vpn),
+          ),
+        ],
       ),
       body: ListenableBuilder(
         listenable: SelectedTarget.instance,
