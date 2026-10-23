@@ -209,12 +209,55 @@ class _FacetLine extends StatelessWidget {
   }
 }
 
+/// The table's number columns, in the order they are shown.
+enum TrafficColumn {
+  conns('Conns', TrafficSort.conns, 64),
+  errors('Errors', TrafficSort.errors, 64),
+  sent('Sent', TrafficSort.sent, 96),
+  received('Received', TrafficSort.received, 96),
+  rate('Now', TrafficSort.rate, 96),
+  last('Last', TrafficSort.last, 80);
+
+  const TrafficColumn(this.label, this.sort, this.width);
+
+  final String label;
+  final TrafficSort sort;
+  final double width;
+
+  /// Most wanted first: a narrow table drops columns from the end of this
+  /// list. Errors still show beside the name when their column is gone.
+  static const _priority = [received, conns, rate, sent, errors, last];
+
+  /// The room the name keeps before any column is dropped: the expander,
+  /// two levels of indent and a readable name.
+  static const _nameRoom = 20 + 40 + 140 + 2 * AppSpacing.md;
+
+  /// The columns that fit a table [width] wide, in display order.
+  static List<TrafficColumn> fitting(double width, {required bool live}) {
+    var left = width - _nameRoom;
+    final shown = <TrafficColumn>{};
+    for (final c in _priority) {
+      if (c == rate && !live) continue;
+      if (c.width > left) break;
+      shown.add(c);
+      left -= c.width;
+    }
+    return [for (final c in values) if (shown.contains(c)) c];
+  }
+}
+
 /// The table's columns, and which one it is sorted by.
 class TrafficTableHeader extends StatelessWidget {
-  const TrafficTableHeader({super.key, required this.sort, required this.live, required this.onSort, required this.title});
+  const TrafficTableHeader({
+    super.key,
+    required this.sort,
+    required this.columns,
+    required this.onSort,
+    required this.title,
+  });
 
   final TrafficSort sort;
-  final bool live;
+  final List<TrafficColumn> columns;
   final ValueChanged<TrafficSort> onSort;
   final String title;
 
@@ -244,25 +287,17 @@ class TrafficTableHeader extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
       child: Row(
         children: [
-          Expanded(child: Align(alignment: Alignment.centerLeft, child: col(title, TrafficSort.name, 0, left: true))),
-          col('Conns', TrafficSort.conns, _TrafficColumns.conns),
-          col('Errors', TrafficSort.errors, _TrafficColumns.errors),
-          col('Sent', TrafficSort.sent, _TrafficColumns.bytes),
-          col('Received', TrafficSort.received, _TrafficColumns.bytes),
-          if (live) col('Now', TrafficSort.rate, _TrafficColumns.rate),
-          col('Last', TrafficSort.last, _TrafficColumns.last),
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: col(title, TrafficSort.name, 0, left: true),
+            ),
+          ),
+          for (final c in columns) col(c.label, c.sort, c.width),
         ],
       ),
     );
   }
-}
-
-abstract final class _TrafficColumns {
-  static const double conns = 64;
-  static const double errors = 64;
-  static const double bytes = 96;
-  static const double rate = 96;
-  static const double last = 80;
 }
 
 /// One line of the grouped table.
@@ -274,7 +309,7 @@ class TrafficGroupLine extends StatelessWidget {
     required this.expandable,
     required this.expanded,
     required this.selected,
-    required this.live,
+    required this.columns,
     required this.onTap,
     required this.onToggle,
   });
@@ -284,7 +319,7 @@ class TrafficGroupLine extends StatelessWidget {
   final bool expandable;
   final bool expanded;
   final bool selected;
-  final bool live;
+  final List<TrafficColumn> columns;
   final VoidCallback onTap;
   final VoidCallback onToggle;
 
@@ -323,26 +358,30 @@ class TrafficGroupLine extends StatelessWidget {
                 TextSpan(children: [
                   TextSpan(text: label),
                   if (t.open > 0) TextSpan(text: '  ${t.open} open', style: numbers.copyWith(color: colors.success)),
+                  if (t.errors > 0 && !columns.contains(TrafficColumn.errors))
+                    TextSpan(text: '  ${t.errors} err', style: numbers.copyWith(color: colors.danger)),
                 ]),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: theme.textTheme.bodySmall?.copyWith(fontWeight: group.depth == 0 ? FontWeight.w600 : null),
               ),
             ),
-            SizedBox(width: _TrafficColumns.conns, child: Text('${t.conns}', textAlign: TextAlign.right, style: numbers)),
-            SizedBox(
-              width: _TrafficColumns.errors,
-              child: Text(
-                t.errors == 0 ? '' : '${t.errors}',
-                textAlign: TextAlign.right,
-                style: numbers.copyWith(color: colors.danger),
+            for (final c in columns)
+              SizedBox(
+                width: c.width,
+                child: Text(
+                  switch (c) {
+                    TrafficColumn.conns => '${t.conns}',
+                    TrafficColumn.errors => t.errors == 0 ? '' : '${t.errors}',
+                    TrafficColumn.sent => formatBytes(t.upload),
+                    TrafficColumn.received => formatBytes(t.download),
+                    TrafficColumn.rate => formatRate(t.rate),
+                    TrafficColumn.last => formatAgo(t.last),
+                  },
+                  textAlign: TextAlign.right,
+                  style: c == TrafficColumn.errors ? numbers.copyWith(color: colors.danger) : numbers,
+                ),
               ),
-            ),
-            SizedBox(width: _TrafficColumns.bytes, child: Text(formatBytes(t.upload), textAlign: TextAlign.right, style: numbers)),
-            SizedBox(width: _TrafficColumns.bytes, child: Text(formatBytes(t.download), textAlign: TextAlign.right, style: numbers)),
-            if (live)
-              SizedBox(width: _TrafficColumns.rate, child: Text(formatRate(t.rate), textAlign: TextAlign.right, style: numbers)),
-            SizedBox(width: _TrafficColumns.last, child: Text(formatAgo(t.last), textAlign: TextAlign.right, style: numbers)),
           ],
         ),
       ),

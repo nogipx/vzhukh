@@ -368,10 +368,26 @@ class _TrafficScreenState extends State<TrafficScreen> {
         ],
       );
 
+  /// From this wide on, the filters, the table and the details sit side by
+  /// side.
+  static const _wideFrom = 1180.0;
+
+  /// Below this the details leave too, for a panel that slides in over the
+  /// table; between the two only the filters do.
+  static const _mediumFrom = 760.0;
+
+  /// Below this the search field gets a line of its own.
+  static const _searchLineFrom = 600.0;
+
+  final _scaffold = GlobalKey<ScaffoldState>();
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final live = _window == _Window.live;
+    final width = MediaQuery.sizeOf(context).width;
+    final wide = width >= _wideFrom;
+    final compact = width < _mediumFrom;
     final rows = [
       for (final r in _source)
         if (_query.matches(r, names: _display)) r,
@@ -381,14 +397,143 @@ class _TrafficScreenState extends State<TrafficScreen> {
     final selectedRows = selected == null ? rows : [for (final r in rows) if (_onPath(r, selected)) r];
     final totals = TrafficTotals.of(rows);
 
+    Widget facets() => TrafficFacets(
+          rows: rows,
+          query: _query,
+          display: _display,
+          onToggle: (d, v) => _setQuery(_query.toggle(d, v)),
+        );
+    Widget details() => _Details(
+          path: selected,
+          rows: selectedRows,
+          flows: [
+            for (final f in [..._active, ..._closed])
+              if (selected == null || _onPath(TrafficRow.fromFlow(f), selected)) f,
+          ],
+          display: _display,
+          onFlow: _showFlow,
+          onMakeRule: widget.onMakeRule,
+          onFilter: (d, v) => _setQuery(_query.toggle(d, v)),
+        );
+    final filtered = !_query.isEmpty;
+
+    final search = TextField(
+      controller: _queryCtrl,
+      decoration: const InputDecoration(
+        prefixIcon: Icon(Icons.search),
+        hintText: 'app:waterfox  site:youtube.com  -action:route  port:443  err',
+      ),
+      onChanged: (v) => _setQuery(TrafficQuery.parse(v), editText: false),
+    );
+    final windowPicker = SegmentedButton<_Window>(
+      showSelectedIcon: false,
+      segments: [for (final w in _Window.values) ButtonSegment(value: w, label: Text(w.label))],
+      selected: {_window},
+      onSelectionChanged: (s) => _setWindow(s.first),
+    );
+    final totalsText = Text(
+      '${totals.conns} conn · ${totals.open} open · ↑ ${formatBytes(totals.upload)} ↓ ${formatBytes(totals.download)}'
+      '${live ? ' · ${formatRate(totals.rate)}' : ''}',
+      style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+    );
+
+    final table = LayoutBuilder(
+      builder: (context, box) {
+        final columns = TrafficColumn.fitting(box.maxWidth, live: live);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _ChainBar(chain: _chain, onEdit: _editChain),
+            TrafficTableHeader(
+              title: _chain.map((d) => d.label).join(' › '),
+              sort: _sort,
+              columns: columns,
+              onSort: (s) => setState(() => _sort = s),
+            ),
+            const Divider(),
+            Expanded(
+              child: lines.isEmpty
+                  ? (!live && _recording == false && _query.isEmpty
+                      ? Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const EmptyState(
+                              icon: Icons.fiber_manual_record_outlined,
+                              title: 'Not recording',
+                              message: 'Open connections are always listed under "Open now". '
+                                  'Record keeps the closed ones and an hour of totals, '
+                                  'until you stop and clear.',
+                            ),
+                            FilledButton.icon(
+                              onPressed: _toggleRecording,
+                              icon: const Icon(Icons.fiber_manual_record),
+                              label: const Text('Record'),
+                            ),
+                          ],
+                        )
+                      : EmptyState(
+                          icon: Icons.swap_vert,
+                          title: _query.isEmpty ? 'No traffic yet' : 'Nothing matches',
+                          message: _query.isEmpty ? null : 'Change the filter or the time window.',
+                        ))
+                  : ListView.builder(
+                      itemCount: lines.length,
+                      itemExtent: 28,
+                      itemBuilder: (_, i) {
+                        final g = lines[i];
+                        final key = _pathKey(g.path);
+                        final isSelected = selected != null && _pathKey(selected) == key;
+                        return TrafficGroupLine(
+                          group: g,
+                          label: _display(g.dim, g.value),
+                          columns: columns,
+                          expandable: g.depth + 1 < _chain.length,
+                          expanded: _expanded.contains(key),
+                          selected: isSelected,
+                          // With no room for the details beside the table, a
+                          // tap opens them; tapping the same line again there
+                          // is no way to unselect, so it keeps the selection.
+                          onTap: compact
+                              ? () {
+                                  setState(() => _selected = g.path);
+                                  _scaffold.currentState?.openEndDrawer();
+                                }
+                              : () => setState(() => _selected = isSelected ? null : g.path),
+                          onToggle: () => setState(() => _expanded.contains(key) ? _expanded.remove(key) : _expanded.add(key)),
+                        );
+                      },
+                    ),
+            ),
+          ],
+        );
+      },
+    );
+
     return Scaffold(
+      key: _scaffold,
+      drawer: wide ? null : Drawer(width: 280, child: SafeArea(child: facets())),
+      endDrawer: compact ? Drawer(width: width * 0.9 < 380 ? width * 0.9 : 380, child: SafeArea(child: details())) : null,
       appBar: AppBar(
         title: const Text('Traffic'),
+        automaticallyImplyLeading: false,
+        leading: wide
+            ? null
+            : IconButton(
+                icon: Badge(isLabelVisible: filtered, smallSize: 6, child: const Icon(Icons.filter_list)),
+                tooltip: 'Filters',
+                onPressed: () => _scaffold.currentState?.openDrawer(),
+              ),
         actions: [
           if (_recording != null)
             Padding(
               padding: const EdgeInsets.only(right: AppSpacing.sm),
               child: _RecordButton(recording: _recording!, since: _recordingSince, onPressed: _toggleRecording),
+            ),
+          if (compact)
+            IconButton(
+              icon: const Icon(Icons.info_outline),
+              tooltip: 'Details',
+              onPressed: () => _scaffold.currentState?.openEndDrawer(),
             ),
           IconButton(
             icon: const Icon(Icons.ios_share),
@@ -409,48 +554,45 @@ class _TrafficScreenState extends State<TrafficScreen> {
           _HelperCard(mac: _mac, routeName: _routeName),
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _queryCtrl,
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.search),
-                      hintText: 'app:waterfox  site:youtube.com  -action:route  port:443  err',
-                    ),
-                    onChanged: (v) => _setQuery(TrafficQuery.parse(v), editText: false),
+            child: width >= _searchLineFrom
+                ? Row(
+                    children: [
+                      Expanded(child: search),
+                      const SizedBox(width: AppSpacing.sm),
+                      windowPicker,
+                    ],
+                  )
+                : Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      search,
+                      const SizedBox(height: AppSpacing.sm),
+                      windowPicker,
+                    ],
                   ),
-                ),
-                const SizedBox(width: AppSpacing.sm),
-                SegmentedButton<_Window>(
-                  showSelectedIcon: false,
-                  segments: [for (final w in _Window.values) ButtonSegment(value: w, label: Text(w.label))],
-                  selected: {_window},
-                  onSelectionChanged: (s) => _setWindow(s.first),
-                ),
-              ],
-            ),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, 0),
-            child: Row(
+            child: Wrap(
+              spacing: AppSpacing.xs,
+              runSpacing: AppSpacing.xs,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              alignment: WrapAlignment.spaceBetween,
               children: [
-                for (final (label, q) in _presets)
-                  Padding(
-                    padding: const EdgeInsets.only(right: AppSpacing.xs),
-                    child: ChoiceChip(
-                      label: Text(label),
-                      visualDensity: VisualDensity.compact,
-                      selected: _query.text.trim() == q,
-                      onSelected: (_) => _setQuery(TrafficQuery.parse(q)),
-                    ),
-                  ),
-                const Spacer(),
-                Text(
-                  '${totals.conns} conn · ${totals.open} open · ↑ ${formatBytes(totals.upload)} ↓ ${formatBytes(totals.download)}'
-                  '${live ? ' · ${formatRate(totals.rate)}' : ''}',
-                  style: theme.textTheme.bodySmall?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                Wrap(
+                  spacing: AppSpacing.xs,
+                  runSpacing: AppSpacing.xs,
+                  children: [
+                    for (final (label, q) in _presets)
+                      ChoiceChip(
+                        label: Text(label),
+                        visualDensity: VisualDensity.compact,
+                        selected: _query.text.trim() == q,
+                        onSelected: (_) => _setQuery(TrafficQuery.parse(q)),
+                      ),
+                  ],
                 ),
+                totalsText,
               ],
             ),
           ),
@@ -473,91 +615,15 @@ class _TrafficScreenState extends State<TrafficScreen> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                SizedBox(
-                  width: 220,
-                  child: TrafficFacets(
-                    rows: rows,
-                    query: _query,
-                    display: _display,
-                    onToggle: (d, v) => _setQuery(_query.toggle(d, v)),
-                  ),
-                ),
-                const VerticalDivider(width: 1),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _ChainBar(chain: _chain, onEdit: _editChain),
-                      TrafficTableHeader(
-                        title: _chain.map((d) => d.label).join(' › '),
-                        sort: _sort,
-                        live: live,
-                        onSort: (s) => setState(() => _sort = s),
-                      ),
-                      const Divider(),
-                      Expanded(
-                        child: lines.isEmpty
-                            ? (!live && _recording == false && _query.isEmpty
-                                ? Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      const EmptyState(
-                                        icon: Icons.fiber_manual_record_outlined,
-                                        title: 'Not recording',
-                                        message: 'Open connections are always listed under "Open now". '
-                                            'Record keeps the closed ones and an hour of totals, '
-                                            'until you stop and clear.',
-                                      ),
-                                      FilledButton.icon(
-                                        onPressed: _toggleRecording,
-                                        icon: const Icon(Icons.fiber_manual_record),
-                                        label: const Text('Record'),
-                                      ),
-                                    ],
-                                  )
-                                : EmptyState(
-                                    icon: Icons.swap_vert,
-                                    title: _query.isEmpty ? 'No traffic yet' : 'Nothing matches',
-                                    message: _query.isEmpty ? null : 'Change the filter or the time window.',
-                                  ))
-                            : ListView.builder(
-                                itemCount: lines.length,
-                                itemExtent: 28,
-                                itemBuilder: (_, i) {
-                                  final g = lines[i];
-                                  final key = _pathKey(g.path);
-                                  return TrafficGroupLine(
-                                    group: g,
-                                    label: _display(g.dim, g.value),
-                                    live: live,
-                                    expandable: g.depth + 1 < _chain.length,
-                                    expanded: _expanded.contains(key),
-                                    selected: selected != null && _pathKey(selected) == key,
-                                    onTap: () => setState(() => _selected = selected != null && _pathKey(selected) == key ? null : g.path),
-                                    onToggle: () => setState(() => _expanded.contains(key) ? _expanded.remove(key) : _expanded.add(key)),
-                                  );
-                                },
-                              ),
-                      ),
-                    ],
-                  ),
-                ),
-                const VerticalDivider(width: 1),
-                SizedBox(
-                  width: 340,
-                  child: _Details(
-                    path: selected,
-                    rows: selectedRows,
-                    flows: [
-                      for (final f in [..._active, ..._closed])
-                        if (selected == null || _onPath(TrafficRow.fromFlow(f), selected)) f,
-                    ],
-                    display: _display,
-                    onFlow: _showFlow,
-                    onMakeRule: widget.onMakeRule,
-                    onFilter: (d, v) => _setQuery(_query.toggle(d, v)),
-                  ),
-                ),
+                if (wide) ...[
+                  SizedBox(width: 220, child: facets()),
+                  const VerticalDivider(width: 1),
+                ],
+                Expanded(child: table),
+                if (!compact) ...[
+                  const VerticalDivider(width: 1),
+                  SizedBox(width: wide ? 340 : 300, child: details()),
+                ],
               ],
             ),
           ),
@@ -627,7 +693,9 @@ class _ChainBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    return Padding(
+    // Four levels do not fit a narrow table; they scroll instead.
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
       padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.xs),
       child: Row(
         children: [
