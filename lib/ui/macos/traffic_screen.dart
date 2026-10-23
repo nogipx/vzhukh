@@ -9,6 +9,7 @@ import '../../daemon/daemon_models.dart';
 import '../../daemon/traffic_analysis.dart';
 import '../../models/routing_rule.dart';
 import '../../storage/helper_settings.dart';
+import '../../storage/traffic_groupings.dart';
 import '../../storage/routing_rules_repository.dart';
 import '../../vpn/macos_daemon_backend.dart';
 import '../../vpn/vpn_controller.dart';
@@ -117,7 +118,93 @@ class _TrafficScreenState extends State<TrafficScreen> {
       onHide: () => _setShown(false),
     );
     _updatePolling();
+    _loadGroupings();
   }
+
+  // ---- Groupings ----
+
+  final _groupings = const TrafficGroupingsRepository();
+  List<TrafficGrouping> _saved = const [];
+
+  Future<void> _loadGroupings() async {
+    final current = await _groupings.current();
+    final saved = await _groupings.saved();
+    if (!mounted) return;
+    setState(() {
+      _saved = saved;
+      if (current != null) {
+        _chain
+          ..clear()
+          ..addAll(current);
+      }
+    });
+  }
+
+  void _setChain(List<TrafficDim> chain) {
+    setState(() {
+      _chain
+        ..clear()
+        ..addAll(chain);
+      _expanded.clear();
+    });
+    _groupings.setCurrent(_chain);
+  }
+
+  Future<void> _chooseGrouping() => showActionSheet(
+        context,
+        title: 'Group by',
+        actions: [
+          for (final g in [...TrafficGrouping.builtIn, ..._saved])
+            SheetAction(g.name, () => _setChain(g.chain), subtitle: g.levels, checked: g.groupsLike(_chain)),
+          const SheetAction.divider(),
+          SheetAction('Save this grouping…', _saveGrouping, icon: Icons.bookmark_add_outlined),
+          if (_saved.isNotEmpty)
+            SheetAction('Delete a saved grouping…', _deleteGrouping, icon: Icons.delete_outline, destructive: true),
+        ],
+      );
+
+  Future<void> _saveGrouping() async {
+    final ctrl = TextEditingController(text: TrafficGrouping.describe(_chain));
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Save this grouping'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: InputDecoration(helperText: TrafficGrouping.describe(_chain)),
+          onSubmitted: (v) => Navigator.pop(ctx, v),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text), child: const Text('Save')),
+        ],
+      ),
+    );
+    final trimmed = name?.trim() ?? '';
+    if (trimmed.isEmpty) return;
+    // The same name again replaces the old one.
+    final saved = [
+      for (final g in _saved)
+        if (g.name != trimmed) g,
+      TrafficGrouping(trimmed, [..._chain]),
+    ];
+    await _groupings.save(saved);
+    if (mounted) setState(() => _saved = saved);
+  }
+
+  Future<void> _deleteGrouping() => showActionSheet(
+        context,
+        title: 'Delete a saved grouping',
+        actions: [
+          for (final g in _saved)
+            SheetAction(g.name, () async {
+              final saved = [for (final o in _saved) if (o.name != g.name) o];
+              await _groupings.save(saved);
+              if (mounted) setState(() => _saved = saved);
+            }, subtitle: g.levels, icon: Icons.delete_outline, destructive: true),
+        ],
+      );
 
   @override
   void didUpdateWidget(TrafficScreen old) {
@@ -355,16 +442,22 @@ class _TrafficScreenState extends State<TrafficScreen> {
         actions: [
           for (final d in TrafficDim.values)
             if (!_chain.contains(d) || (level < _chain.length && _chain[level] == d))
-              SheetAction(d.label, () => setState(() {
-                    level < _chain.length ? _chain[level] = d : _chain.add(d);
-                    _expanded.clear();
-                  }),
+              SheetAction(d.label, () {
+                setState(() {
+                  level < _chain.length ? _chain[level] = d : _chain.add(d);
+                  _expanded.clear();
+                });
+                _groupings.setCurrent(_chain);
+              },
                   checked: level < _chain.length && _chain[level] == d),
           if (level < _chain.length && _chain.length > 1)
-            SheetAction('Remove this level', () => setState(() {
-                  _chain.removeAt(level);
-                  _expanded.clear();
-                }),
+            SheetAction('Remove this level', () {
+              setState(() {
+                _chain.removeAt(level);
+                _expanded.clear();
+              });
+              _groupings.setCurrent(_chain);
+            },
                 icon: Icons.close, destructive: true),
         ],
       );
@@ -444,7 +537,7 @@ class _TrafficScreenState extends State<TrafficScreen> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _ChainBar(chain: _chain, onEdit: _editChain),
+            _ChainBar(chain: _chain, onEdit: _editChain, onPresets: _chooseGrouping, saved: _saved),
             TrafficTableHeader(
               title: _chain.map((d) => d.label).join(' › '),
               sort: _sort,
@@ -686,10 +779,12 @@ class _RecordButton extends StatelessWidget {
 
 /// The grouping levels as chips: a click changes one, + adds one.
 class _ChainBar extends StatelessWidget {
-  const _ChainBar({required this.chain, required this.onEdit});
+  const _ChainBar({required this.chain, required this.onEdit, required this.onPresets, required this.saved});
 
   final List<TrafficDim> chain;
   final void Function(int level) onEdit;
+  final VoidCallback onPresets;
+  final List<TrafficGrouping> saved;
 
   @override
   Widget build(BuildContext context) {
@@ -700,7 +795,16 @@ class _ChainBar extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(AppSpacing.md, AppSpacing.sm, AppSpacing.md, AppSpacing.xs),
       child: Row(
         children: [
-          Text('Group by', style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+          // The grouping's name when it is a preset, so it reads as one.
+          ActionChip(
+            avatar: const Icon(Icons.bookmarks_outlined, size: 16),
+            label: Text(
+              [...TrafficGrouping.builtIn, ...saved].where((g) => g.groupsLike(chain)).firstOrNull?.name ?? 'Group by',
+            ),
+            tooltip: 'Groupings',
+            visualDensity: VisualDensity.compact,
+            onPressed: onPresets,
+          ),
           const SizedBox(width: AppSpacing.sm),
           for (final (i, d) in chain.indexed) ...[
             if (i > 0) Icon(Icons.chevron_right, size: 16, color: theme.colorScheme.onSurfaceVariant),
