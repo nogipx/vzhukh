@@ -2,7 +2,7 @@ name: vzhukh
 description: "Routes traffic through your own SSH servers."
 publish_to: 'none'
 
-version: 2.2.0+4
+version: 2.3.0+5
 
 environment:
   sdk: ^3.9.2
