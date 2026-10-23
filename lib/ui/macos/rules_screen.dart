@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../daemon/daemon_models.dart';
 import '../../daemon/resolve_system_rules.dart';
 import '../../models/routing_rule.dart';
+import '../../models/rule_folders.dart';
 import '../../models/tunnel_route.dart';
 import '../../storage/route_repository.dart';
 import '../../models/rule_set.dart';
@@ -122,7 +123,7 @@ class RulesScreenState extends State<RulesScreen> {
     await _apply();
   }
 
-  Future<String?> _askName(String title, {String initial = ''}) async {
+  Future<String?> _askName(String title, {String initial = '', String hint = 'Work, Home, Travel…'}) async {
     final ctrl = TextEditingController(text: initial);
     final name = await showDialog<String>(
       context: context,
@@ -131,7 +132,7 @@ class RulesScreenState extends State<RulesScreen> {
         content: TextField(
           controller: ctrl,
           autofocus: true,
-          decoration: const InputDecoration(hintText: 'Work, Home, Travel…'),
+          decoration: InputDecoration(hintText: hint),
           onSubmitted: (v) => Navigator.pop(ctx, v),
         ),
         actions: [
@@ -340,7 +341,9 @@ class RulesScreenState extends State<RulesScreen> {
     final rules = [..._rules.rules];
     final i = rules.indexWhere((r) => r.id == result.id);
     if (i >= 0) {
-      rules[i] = result;
+      // The editor knows nothing of folders: the rule stays in its own.
+      final folderId = rules[i].folderId;
+      rules[i] = folderId == null ? result : result.copyWith(folderId: folderId);
     } else {
       // New rules go first: a rule made for one app or site is more
       // specific than what is already there.
@@ -405,11 +408,15 @@ class RulesScreenState extends State<RulesScreen> {
       case 'edit':
         await edit(existing: r);
       case 'top':
-        list.insert(0, list.removeAt(i));
-        await _save(_rules.copyWith(rules: list));
+        list.insert(0, list.removeAt(i).copyWith(clearFolder: true));
+        await _save(_rules.copyWith(rules: list).normalized());
       case 'bottom':
-        list.add(list.removeAt(i));
-        await _save(_rules.copyWith(rules: list));
+        list.add(list.removeAt(i).copyWith(clearFolder: true));
+        await _save(_rules.copyWith(rules: list).normalized());
+      case 'folder':
+        await _moveToFolder(r);
+      case 'unfolder':
+        await _save(_rules.takeOutOfFolder(r.id));
       case 'delete':
         final ok = await confirmDestructive(
           context,
@@ -418,16 +425,117 @@ class RulesScreenState extends State<RulesScreen> {
         );
         if (ok) {
           list.removeAt(i);
-          await _save(_rules.copyWith(rules: list));
+          await _save(_rules.copyWith(rules: list).normalized());
         }
     }
   }
 
-  Widget _row(RoutingRule r, {int? dragIndex}) {
+  // ---- Folders ----
+
+  Future<void> _moveToFolder(RoutingRule r) => showActionSheet(
+        context,
+        title: 'Move "${r.name}" to',
+        actions: [
+          for (final f in _rules.folders)
+            if (f.id != r.folderId)
+              SheetAction(f.name, () => _save(_rules.moveToFolder(r.id, f.id)), icon: Icons.folder_outlined),
+          SheetAction('New folder…', () async {
+            final name = await _askName('New folder', hint: 'Work, Streaming, Games…');
+            if (name == null) return;
+            final folder = RuleFolder(id: 'folder_${DateTime.now().microsecondsSinceEpoch}', name: name);
+            await _save(_rules.newFolder(r.id, folder));
+          }, icon: Icons.create_new_folder_outlined),
+        ],
+      );
+
+  Future<void> _folderAction(RuleFolder f, String action) async {
+    switch (action) {
+      case 'rename':
+        final name = await _askName('Rename folder', initial: f.name, hint: 'Work, Streaming, Games…');
+        if (name != null) await _save(_rules.updateFolder(f.copyWith(name: name)));
+      case 'top':
+        await _save(_rules.moveFolder(f.id, toTop: true));
+      case 'bottom':
+        await _save(_rules.moveFolder(f.id, toTop: false));
+      case 'ungroup':
+        await _save(_rules.ungroup(f.id));
+      case 'delete':
+        final count = _rules.rules.where((r) => r.folderId == f.id).length;
+        final ok = await confirmDestructive(
+          context,
+          title: 'Delete "${f.name}" and its rules?',
+          message: '$count rule${count == 1 ? '' : 's'} go with it. "Ungroup" keeps them.',
+        );
+        if (ok) await _save(_rules.deleteFolder(f.id));
+    }
+  }
+
+  Widget _folderRow(FolderEntry e, {int? dragIndex}) {
+    final f = e.folder;
+    final theme = Theme.of(context);
+    final muted = theme.colorScheme.onSurfaceVariant;
+    return ListTile(
+      key: ValueKey('folder:${f.id}'),
+      dense: true,
+      visualDensity: VisualDensity.compact,
+      leading: dragIndex != null && _activeOwn
+          ? ReorderableDragStartListener(index: dragIndex, child: const Icon(Icons.drag_indicator))
+          : Icon(_activeOwn ? Icons.drag_indicator : Icons.lock_outline, color: theme.disabledColor),
+      title: Row(
+        children: [
+          Icon(f.collapsed ? Icons.chevron_right : Icons.expand_more, size: 18, color: muted),
+          const SizedBox(width: AppSpacing.xs),
+          Icon(f.collapsed ? Icons.folder_outlined : Icons.folder_open_outlined, size: 18,
+              color: f.enabled ? theme.colorScheme.primary : theme.disabledColor),
+          const SizedBox(width: AppSpacing.sm),
+          Flexible(
+            child: Text(
+              f.name,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: f.enabled ? null : theme.disabledColor, fontWeight: FontWeight.w600),
+            ),
+          ),
+          const SizedBox(width: AppSpacing.sm),
+          Text('${e.rules.length} rule${e.rules.length == 1 ? '' : 's'}',
+              style: theme.textTheme.bodySmall?.copyWith(color: muted)),
+        ],
+      ),
+      onTap: _activeOwn ? () => _save(_rules.updateFolder(f.copyWith(collapsed: !f.collapsed))) : null,
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Switch(
+            value: f.enabled,
+            onChanged: !_activeOwn ? null : (v) => _save(_rules.updateFolder(f.copyWith(enabled: v))),
+          ),
+          if (_activeOwn)
+            ActionSheetButton(
+              title: f.name,
+              actions: () => [
+                SheetAction('Rename', () => _folderAction(f, 'rename'), icon: Icons.edit_outlined),
+                SheetAction('Move to top', () => _folderAction(f, 'top'), icon: Icons.vertical_align_top),
+                SheetAction('Move to bottom', () => _folderAction(f, 'bottom'), icon: Icons.vertical_align_bottom),
+                SheetAction('Ungroup', () => _folderAction(f, 'ungroup'),
+                    icon: Icons.folder_off_outlined, subtitle: 'The rules stay where they are'),
+                const SheetAction.divider(),
+                SheetAction('Delete with its rules', () => _folderAction(f, 'delete'),
+                    icon: Icons.delete_outline, destructive: true),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _row(RoutingRule r, {int? dragIndex, bool indent = false}) {
+    final folder = _rules.folderOf(r);
+    final inPlay = _rules.inPlay(r);
+    final summary = _summary(r);
     return ListTile(
       key: ValueKey(r.id),
       dense: true,
       visualDensity: VisualDensity.compact,
+      contentPadding: indent ? const EdgeInsets.only(left: 40, right: 16) : null,
       leading: dragIndex != null && _activeOwn
           ? ReorderableDragStartListener(index: dragIndex, child: const Icon(Icons.drag_indicator))
           : Icon(_activeOwn ? Icons.drag_indicator : Icons.lock_outline,
@@ -439,16 +547,19 @@ class RulesScreenState extends State<RulesScreen> {
               r.name,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: r.enabled ? null : Theme.of(context).disabledColor,
+                color: inPlay ? null : Theme.of(context).disabledColor,
                 fontWeight: FontWeight.w500,
               ),
             ),
           ),
           const SizedBox(width: AppSpacing.sm),
-          _ActionBadge(action: r.action, label: _actionLabel(r), enabled: r.enabled),
+          _ActionBadge(action: r.action, label: _actionLabel(r), enabled: inPlay),
         ],
       ),
-      subtitle: Text(_summary(r), maxLines: 1, overflow: TextOverflow.ellipsis),
+      // Out of the list's own order, the folder is the only hint of where
+      // a rule sits.
+      subtitle: Text(folder != null && !indent ? '${folder.name}  ·  $summary' : summary,
+          maxLines: 1, overflow: TextOverflow.ellipsis),
       onTap: _activeOwn ? () => edit(existing: r) : null,
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
@@ -472,6 +583,9 @@ class RulesScreenState extends State<RulesScreen> {
                     icon: Icons.vertical_align_top),
                 SheetAction('Move to bottom', () => _rowAction(r, 'bottom'),
                     icon: Icons.vertical_align_bottom),
+                SheetAction('Move to folder…', () => _rowAction(r, 'folder'), icon: Icons.drive_file_move_outlined),
+                if (r.folderId != null)
+                  SheetAction('Take out of folder', () => _rowAction(r, 'unfolder'), icon: Icons.folder_off_outlined),
                 const SheetAction.divider(),
                 SheetAction('Delete', () => _rowAction(r, 'delete'),
                     icon: Icons.delete_outline, destructive: true),
@@ -541,6 +655,7 @@ class RulesScreenState extends State<RulesScreen> {
   Widget build(BuildContext context) {
     final rules = _rules.rules;
     final shown = rules.where(_matches).toList();
+    final entries = _rules.entries();
     return Scaffold(
       appBar: AppBar(
         title: _setSelector(),
@@ -599,13 +714,12 @@ class RulesScreenState extends State<RulesScreen> {
                     : ReorderableListView.builder(
                         buildDefaultDragHandles: false,
                         padding: const EdgeInsets.only(bottom: 88),
-                        itemCount: rules.length,
-                        onReorderItem: (from, to) {
-                          final list = [...rules];
-                          list.insert(to, list.removeAt(from));
-                          _save(_rules.copyWith(rules: list));
+                        itemCount: entries.length,
+                        onReorderItem: (from, to) => _save(_rules.reorder(from, to)),
+                        itemBuilder: (_, i) => switch (entries[i]) {
+                          final FolderEntry e => _folderRow(e, dragIndex: i),
+                          RuleLine(:final rule, :final folder) => _row(rule, dragIndex: i, indent: folder != null),
                         },
-                        itemBuilder: (_, i) => _row(rules[i], dragIndex: i),
                       ),
           ),
         ],

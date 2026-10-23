@@ -62,7 +62,7 @@ class BuildDaemonConfig {
   /// connected one.
   static Set<String> routesUsed(RoutingRules rules, {String? connectedTunnelRouteId}) => {
         for (final rule in rules.rules)
-          if (rule.enabled && rule.action == RuleAction.route)
+          if (rules.inPlay(rule) && rule.action == RuleAction.route)
             _routeFor(rule, connectedTunnelRouteId),
       }..remove(connectedRouteId);
 
@@ -99,7 +99,7 @@ class BuildDaemonConfig {
             'cidrs': rule.cidrs,
             'ports': rule.ports,
             ...decision(rule),
-            'disabled': !rule.enabled,
+            'disabled': !rules.inPlay(rule),
           },
       ],
       'default': switch (rules.defaultAction) {

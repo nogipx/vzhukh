@@ -48,6 +48,10 @@ class RoutingRule {
 
   final bool enabled;
 
+  /// The [RuleFolder] it sits in, if any. A folder's rules always stand
+  /// together in the list.
+  final String? folderId;
+
   const RoutingRule({
     required this.id,
     required this.name,
@@ -60,6 +64,7 @@ class RoutingRule {
     this.vpnId,
     this.vpnName,
     this.enabled = true,
+    this.folderId,
   });
 
   bool get matchesEverything =>
@@ -78,6 +83,8 @@ class RoutingRule {
     String? vpnName,
     bool clearVpn = false,
     bool? enabled,
+    String? folderId,
+    bool clearFolder = false,
   }) =>
       RoutingRule(
         id: id,
@@ -91,6 +98,7 @@ class RoutingRule {
         vpnId: clearVpn ? null : vpnId ?? this.vpnId,
         vpnName: clearVpn ? null : vpnName ?? this.vpnName,
         enabled: enabled ?? this.enabled,
+        folderId: clearFolder ? null : folderId ?? this.folderId,
       );
 
   Map<String, dynamic> toJson() => {
@@ -105,6 +113,7 @@ class RoutingRule {
         if (vpnId != null) 'vpnId': vpnId,
         if (vpnName != null) 'vpnName': vpnName,
         'enabled': enabled,
+        if (folderId != null) 'folderId': folderId,
       };
 
   factory RoutingRule.fromJson(Map<String, dynamic> json) => RoutingRule(
@@ -119,6 +128,39 @@ class RoutingRule {
         vpnId: json['vpnId'] as String?,
         vpnName: json['vpnName'] as String?,
         enabled: json['enabled'] as bool? ?? true,
+        folderId: json['folderId'] as String?,
+      );
+}
+
+/// A named block of rules. It does not change how they are matched: its
+/// rules stand together in the order, and the order is all that counts. A
+/// folder that is off takes its rules out of play without touching their
+/// own switches.
+@immutable
+class RuleFolder {
+  final String id;
+  final String name;
+  final bool enabled;
+
+  /// Folded away in the list. Only how it looks.
+  final bool collapsed;
+
+  const RuleFolder({required this.id, required this.name, this.enabled = true, this.collapsed = false});
+
+  RuleFolder copyWith({String? name, bool? enabled, bool? collapsed}) => RuleFolder(
+        id: id,
+        name: name ?? this.name,
+        enabled: enabled ?? this.enabled,
+        collapsed: collapsed ?? this.collapsed,
+      );
+
+  Map<String, dynamic> toJson() => {'id': id, 'name': name, 'enabled': enabled, 'collapsed': collapsed};
+
+  factory RuleFolder.fromJson(Map<String, dynamic> json) => RuleFolder(
+        id: json['id'] as String,
+        name: json['name'] as String? ?? '',
+        enabled: json['enabled'] as bool? ?? true,
+        collapsed: json['collapsed'] as bool? ?? false,
       );
 }
 
@@ -135,27 +177,42 @@ class RoutingRules {
   /// never pass through vzhukh.
   final List<String> bypass;
 
+  /// The folders [rules] name. An app from before folders reads the rules
+  /// and leaves these alone, and so would match the rules of a folder
+  /// that is off.
+  final List<RuleFolder> folders;
+
   const RoutingRules({
     this.rules = const [],
     this.defaultAction = DefaultAction.connectedRoute,
     this.bypass = const [],
+    this.folders = const [],
   });
 
   RoutingRules copyWith({
     List<RoutingRule>? rules,
     DefaultAction? defaultAction,
     List<String>? bypass,
+    List<RuleFolder>? folders,
   }) =>
       RoutingRules(
         rules: rules ?? this.rules,
         defaultAction: defaultAction ?? this.defaultAction,
         bypass: bypass ?? this.bypass,
+        folders: folders ?? this.folders,
       );
+
+  RuleFolder? folderOf(RoutingRule rule) =>
+      rule.folderId == null ? null : folders.where((f) => f.id == rule.folderId).firstOrNull;
+
+  /// Whether [rule] takes part in matching: it is on, and so is its folder.
+  bool inPlay(RoutingRule rule) => rule.enabled && (folderOf(rule)?.enabled ?? true);
 
   Map<String, dynamic> toJson() => {
         'rules': rules.map((r) => r.toJson()).toList(),
         'defaultAction': defaultAction.name,
         'bypass': bypass,
+        if (folders.isNotEmpty) 'folders': folders.map((f) => f.toJson()).toList(),
       };
 
   factory RoutingRules.fromJson(Map<String, dynamic> json) => RoutingRules(
@@ -165,5 +222,8 @@ class RoutingRules {
         defaultAction: DefaultAction.values
             .byName(json['defaultAction'] as String? ?? 'connectedRoute'),
         bypass: List<String>.from(json['bypass'] as List? ?? const []),
+        folders: (json['folders'] as List? ?? const [])
+            .map((f) => RuleFolder.fromJson(Map<String, dynamic>.from(f as Map)))
+            .toList(),
       );
 }
