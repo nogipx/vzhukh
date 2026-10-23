@@ -51,6 +51,7 @@ func (p *fakePlatform) Down() error {
 
 func (p *fakePlatform) Direct() DirectNet                { return &fakeDirect{} }
 func (p *fakePlatform) BaseDialer() sshtun.ContextDialer { return &net.Dialer{} }
+func (p *fakePlatform) VPNs() []VPN                      { return nil }
 func (p *fakePlatform) Lookup() ProcessLookup {
 	return func(string, netip.AddrPort) (procinfo.Process, error) {
 		return procinfo.Process{}, procinfo.ErrNotFound

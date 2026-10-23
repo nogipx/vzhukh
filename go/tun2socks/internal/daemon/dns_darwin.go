@@ -73,6 +73,12 @@ func (o *dnsOverride) get(service string) ([]string, error) {
 	return servers, nil
 }
 
+// errServiceGone is a service networksetup does not know: one a VPN app
+// listed while it was configured and has since removed. Its DNS is nothing
+// to set or put back, and failing over it would leave the tunnel unable to
+// start until the saved settings were deleted by hand.
+var errServiceGone = errors.New("network service is gone")
+
 func (o *dnsOverride) set(service string, servers []string) error {
 	args := []string{"-setdnsservers", service}
 	if len(servers) == 0 {
@@ -81,6 +87,9 @@ func (o *dnsOverride) set(service string, servers []string) error {
 		args = append(args, servers...)
 	}
 	if out, err := exec.Command(networksetup, args...).CombinedOutput(); err != nil {
+		if strings.Contains(string(out), "is not a recognized network service") {
+			return fmt.Errorf("set DNS of %s: %w", service, errServiceGone)
+		}
 		return fmt.Errorf("set DNS of %s: %v: %s", service, err, strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -132,7 +141,12 @@ func (o *dnsOverride) Apply(server netip.Addr) ([]string, error) {
 	}
 
 	for _, service := range services {
-		if err := o.set(service, []string{server.String()}); err != nil {
+		err := o.set(service, []string{server.String()})
+		if errors.Is(err, errServiceGone) {
+			o.logf("dns: %v; skipped", err)
+			continue
+		}
+		if err != nil {
 			o.Restore()
 			return nil, err
 		}
@@ -153,7 +167,12 @@ func (o *dnsOverride) Restore() error {
 	}
 	var firstErr error
 	for service, servers := range backup.Services {
-		if err := o.set(service, servers); err != nil && firstErr == nil {
+		err := o.set(service, servers)
+		if errors.Is(err, errServiceGone) {
+			o.logf("dns: %v; nothing to restore", err)
+			continue
+		}
+		if err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -242,10 +261,14 @@ func (o *dnsOverride) Reassert(server netip.Addr) (bool, error) {
 		if len(current) == 1 && current[0] == want {
 			continue
 		}
-		backup.Services[service] = current
-		if err := o.set(service, []string{want}); err != nil {
+		err = o.set(service, []string{want})
+		if errors.Is(err, errServiceGone) {
+			continue
+		}
+		if err != nil {
 			return changed, err
 		}
+		backup.Services[service] = current
 		o.logf("dns: %s was set to %v; pointed back at the tunnel", service, current)
 		changed = true
 	}

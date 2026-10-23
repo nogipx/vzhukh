@@ -6,6 +6,7 @@ import '../daemon/build_daemon_config.dart';
 import '../daemon/daemon_client.dart';
 import '../daemon/daemon_models.dart';
 import '../models/tunnel_route.dart';
+import '../storage/helper_settings.dart';
 import '../storage/route_repository.dart';
 import '../storage/routing_rules_repository.dart';
 import '../storage/server_repository.dart';
@@ -105,6 +106,7 @@ class MacDaemonBackend {
       connectedLabel: ref?.label ?? hops.last.server.nickname,
       connectedTunnelRouteId: ref?.routeId,
       rules: await _rules.effective(),
+      leaveOtherVpns: await const HelperSettings().leaveOtherVpns(),
     );
   }
 

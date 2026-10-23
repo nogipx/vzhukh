@@ -4,10 +4,15 @@ import 'package:flutter/foundation.dart';
 /// router.Action, plus [connectedRoute], which the app turns into whichever
 /// route the user pressed Connect on.
 ///
-/// [system] leaves matches to macOS and whatever else is installed, a
-/// corporate VPN typically: names get real answers from the resolver the
-/// system has for them, and the connections go where the system routes them.
-enum RuleAction { connectedRoute, route, direct, block, system }
+/// [direct] goes out of Wi-Fi or Ethernet and never into another VPN.
+/// [vpn] goes into the VPN [RoutingRule.vpnId] names, a corporate one
+/// typically: its names get real answers from that VPN's resolvers, and
+/// while it is down the connection is refused.
+///
+/// [system] leaves matches to macOS and whatever else is installed. It is
+/// what rules said before a VPN could be named, and is turned into [vpn] or
+/// [direct] once the helper can tell which VPN was meant.
+enum RuleAction { connectedRoute, route, direct, vpn, block, system }
 
 /// One macOS routing rule.
 ///
@@ -36,6 +41,11 @@ class RoutingRule {
   /// The [TunnelRoute] id for [RuleAction.route].
   final String? routeId;
 
+  /// The VPN for [RuleAction.vpn], as the helper identifies it, and its
+  /// name for showing while it is not connected.
+  final String? vpnId;
+  final String? vpnName;
+
   final bool enabled;
 
   const RoutingRule({
@@ -47,6 +57,8 @@ class RoutingRule {
     this.ports = const [],
     required this.action,
     this.routeId,
+    this.vpnId,
+    this.vpnName,
     this.enabled = true,
   });
 
@@ -62,6 +74,9 @@ class RoutingRule {
     RuleAction? action,
     String? routeId,
     bool clearRouteId = false,
+    String? vpnId,
+    String? vpnName,
+    bool clearVpn = false,
     bool? enabled,
   }) =>
       RoutingRule(
@@ -73,6 +88,8 @@ class RoutingRule {
         ports: ports ?? this.ports,
         action: action ?? this.action,
         routeId: clearRouteId ? null : routeId ?? this.routeId,
+        vpnId: clearVpn ? null : vpnId ?? this.vpnId,
+        vpnName: clearVpn ? null : vpnName ?? this.vpnName,
         enabled: enabled ?? this.enabled,
       );
 
@@ -85,6 +102,8 @@ class RoutingRule {
         'ports': ports,
         'action': action.name,
         if (routeId != null) 'routeId': routeId,
+        if (vpnId != null) 'vpnId': vpnId,
+        if (vpnName != null) 'vpnName': vpnName,
         'enabled': enabled,
       };
 
@@ -97,6 +116,8 @@ class RoutingRule {
         ports: List<String>.from(json['ports'] as List? ?? const []),
         action: RuleAction.values.byName(json['action'] as String),
         routeId: json['routeId'] as String?,
+        vpnId: json['vpnId'] as String?,
+        vpnName: json['vpnName'] as String?,
         enabled: json['enabled'] as bool? ?? true,
       );
 }

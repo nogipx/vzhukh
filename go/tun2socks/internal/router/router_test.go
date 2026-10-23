@@ -164,12 +164,29 @@ func TestBypassPrefixes(t *testing.T) {
 			{ID: "port", CIDRs: []string{"10.1.0.0/16"}, Ports: []string{"22"}, Action: ActionSystem},
 			{ID: "off", CIDRs: []string{"10.2.0.0/16"}, Action: ActionSystem, Disabled: true},
 			{ID: "direct", CIDRs: []string{"10.3.0.0/16"}, Action: ActionDirect},
+			{ID: "public", CIDRs: []string{"198.51.100.9", "1.0.0.0/8"}, Action: ActionDirect},
+			{ID: "vpn", CIDRs: []string{"192.0.2.1"}, Action: ActionVPN, VPN: "corp"},
 		},
 		Default: viaMain,
 	}, "main")
 	got := r.BypassPrefixes()
-	if len(got) != 1 || got[0] != netip.MustParsePrefix("203.0.113.7/32") {
+	want := []netip.Prefix{netip.MustParsePrefix("203.0.113.7/32"), netip.MustParsePrefix("198.51.100.9/32")}
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("got %v", got)
+	}
+}
+
+func TestVPNActionNamesItsVPN(t *testing.T) {
+	r := mustCompile(t, Config{
+		Rules:   []Rule{{ID: "corp", Domains: []string{"corp.example"}, Action: ActionVPN, VPN: "app:/Applications/Corp.app", Route: "main"}},
+		Default: viaMain,
+	}, "main")
+	got := r.Decide(Meta{Domain: "git.corp.example"})
+	if got.Action != ActionVPN || got.VPN != "app:/Applications/Corp.app" || got.Route != "" {
+		t.Fatalf("got %+v", got)
+	}
+	if _, err := Compile(Config{Rules: []Rule{{ID: "x", Action: ActionVPN}}, Default: viaMain}, []string{"main"}); err == nil {
+		t.Fatal("a VPN rule without a VPN compiled")
 	}
 }
 

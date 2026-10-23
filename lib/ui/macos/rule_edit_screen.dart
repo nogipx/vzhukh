@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
+import '../../daemon/daemon_models.dart';
 import '../../daemon/list_installed_apps.dart';
 import '../../models/routing_rule.dart';
 import '../../models/tunnel_route.dart';
@@ -20,11 +21,15 @@ class RuleEditScreen extends StatefulWidget {
   final RoutingRule? draft;
   final List<TunnelRoute> routes;
 
+  /// The other VPNs connected now, for rules to send matches into.
+  final List<DaemonVpn> vpns;
+
   const RuleEditScreen({
     super.key,
     this.existing,
     this.draft,
     required this.routes,
+    this.vpns = const [],
   });
 
   @override
@@ -42,7 +47,21 @@ class _RuleEditScreenState extends State<RuleEditScreen> {
   late List<String> _apps = [..._initial.apps];
   late RuleAction _action = _initial.action;
   late String? _routeId = _initial.routeId;
+  late String? _vpnId = _initial.vpnId;
+  late String? _vpnName = _initial.vpnName;
   late bool _enabled = _initial.enabled;
+
+  /// A VPN's networks, short. Its host routes are its own addresses, not
+  /// networks anyone means.
+  static String _networks(DaemonVpn vpn) {
+    final nets = vpn.prefixes.where((p) => !p.endsWith('/32')).toList();
+    return '${nets.take(3).join(', ')}${nets.length > 3 ? ', …' : ''}';
+  }
+
+  /// The picked VPN, when it carries only its own networks.
+  DaemonVpn? get _splitVpn => _action == RuleAction.vpn
+      ? widget.vpns.where((v) => v.id == _vpnId && v.split).firstOrNull
+      : null;
 
   @override
   void dispose() {
@@ -71,6 +90,9 @@ class _RuleEditScreenState extends State<RuleEditScreen> {
     if (_action == RuleAction.route && _routeId == null) {
       return 'Pick the route to send matches through';
     }
+    if (_action == RuleAction.vpn && _vpnId == null) {
+      return 'Pick the VPN to send matches into';
+    }
     return null;
   }
 
@@ -98,6 +120,8 @@ class _RuleEditScreenState extends State<RuleEditScreen> {
         ports: _lines(_ports.text),
         action: _action,
         routeId: _action == RuleAction.route ? _routeId : null,
+        vpnId: _action == RuleAction.vpn ? _vpnId : null,
+        vpnName: _action == RuleAction.vpn ? _vpnName : null,
         enabled: _enabled,
       ),
     );
@@ -161,11 +185,28 @@ class _RuleEditScreenState extends State<RuleEditScreen> {
             action: _action,
             routeId: _routeId,
             routes: widget.routes,
-            onChanged: (action, routeId) => setState(() {
+            vpnId: _vpnId,
+            vpnName: _vpnName,
+            vpns: widget.vpns,
+            onChanged: (action, id, name) => setState(() {
               _action = action;
-              _routeId = routeId;
+              if (action == RuleAction.vpn) {
+                _vpnId = id;
+                _vpnName = name;
+              } else {
+                _routeId = id;
+              }
             }),
           ),
+          if (_splitVpn case final vpn?)
+            Padding(
+              padding: const EdgeInsets.only(top: AppSpacing.xs),
+              child: Text(
+                '"${vpn.name}" carries only its own networks (${_networks(vpn)}). '
+                'A site outside them will not open through it.',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.of(context).warning),
+              ),
+            ),
           const SizedBox(height: AppSpacing.lg),
           Text('Match', style: Theme.of(context).textTheme.titleSmall),
           Text(
@@ -217,9 +258,9 @@ class _RuleEditScreenState extends State<RuleEditScreen> {
             decoration: InputDecoration(
               labelText: 'Addresses',
               hintText: '10.0.0.0/8',
-              helperText: _action == RuleAction.system
-                  ? 'Or the domains above. With no apps and ports, these never '
-                      'enter the tunnel at all: right for a VPN\'s gateway.'
+              helperText: _action == RuleAction.direct || _action == RuleAction.system
+                  ? 'Or the domains above. With no apps and ports, public addresses '
+                      'never enter the tunnel at all: right for a VPN\'s gateway.'
                   : 'Or the domains above. Seen only for connections made to '
                       'an address, not a name.',
               helperMaxLines: 2,
@@ -251,12 +292,20 @@ class _ActionPicker extends StatelessWidget {
   final RuleAction action;
   final String? routeId;
   final List<TunnelRoute> routes;
-  final void Function(RuleAction, String?) onChanged;
+  final String? vpnId;
+  final String? vpnName;
+  final List<DaemonVpn> vpns;
+
+  /// Gets the action and, for a route or a VPN, its id and name.
+  final void Function(RuleAction action, String? id, String? name) onChanged;
 
   const _ActionPicker({
     required this.action,
     required this.routeId,
     required this.routes,
+    required this.vpnId,
+    required this.vpnName,
+    required this.vpns,
     required this.onChanged,
   });
 
@@ -265,19 +314,41 @@ class _ActionPicker extends StatelessWidget {
     final current = action == RuleAction.route && !routes.any((r) => r.id == routeId)
         ? RuleAction.connectedRoute
         : action;
-    bool isCurrent(RuleAction a, [String? id]) => current == a && (a != RuleAction.route || routeId == id);
+    bool isCurrent(RuleAction a, [String? id]) =>
+        current == a &&
+        switch (a) {
+          RuleAction.route => routeId == id,
+          RuleAction.vpn => vpnId == id,
+          _ => true,
+        };
+    final missingVpn = action == RuleAction.vpn && vpnId != null && !vpns.any((v) => v.id == vpnId);
     final options = [
-      SheetAction('Through the connected route', () => onChanged(RuleAction.connectedRoute, null),
+      SheetAction('Through the connected route', () => onChanged(RuleAction.connectedRoute, null, null),
           icon: Icons.vpn_lock, checked: isCurrent(RuleAction.connectedRoute)),
       for (final r in routes)
-        SheetAction('Through "${r.label}"', () => onChanged(RuleAction.route, r.id),
+        SheetAction('Through "${r.label}"', () => onChanged(RuleAction.route, r.id, null),
             icon: Icons.route_outlined, checked: isCurrent(RuleAction.route, r.id)),
-      SheetAction('Directly, past the tunnel', () => onChanged(RuleAction.direct, null),
-          icon: Icons.arrow_outward, checked: isCurrent(RuleAction.direct)),
-      SheetAction('Nowhere: block', () => onChanged(RuleAction.block, null),
+      SheetAction('Directly, out of Wi-Fi', () => onChanged(RuleAction.direct, null, null),
+          icon: Icons.arrow_outward, subtitle: 'Never into another VPN', checked: isCurrent(RuleAction.direct)),
+      for (final v in vpns)
+        SheetAction('Into "${v.name}"', () => onChanged(RuleAction.vpn, v.id, v.name),
+            icon: Icons.business,
+            subtitle: [
+              v.interface,
+              v.split ? 'carries only its own networks' : 'carries any traffic',
+              ...v.domains.take(1),
+            ].join(' · '),
+            checked: isCurrent(RuleAction.vpn, v.id)),
+      if (missingVpn)
+        SheetAction('Into "${vpnName ?? vpnId}"', () {},
+            icon: Icons.business, subtitle: 'Not connected now: matches are refused', checked: true),
+      SheetAction('Nowhere: block', () => onChanged(RuleAction.block, null, null),
           icon: Icons.block, checked: isCurrent(RuleAction.block)),
-      SheetAction('Leave to macOS', () => onChanged(RuleAction.system, null),
-          icon: Icons.business, subtitle: 'Corporate VPN and the like', checked: isCurrent(RuleAction.system)),
+      if (action == RuleAction.system)
+        SheetAction('Leave to macOS', () {},
+            icon: Icons.help_outline,
+            subtitle: 'From before VPNs could be named: pick one, or Direct',
+            checked: true),
     ];
     final picked = options.firstWhere((o) => o.checked);
     // A field that opens the choice in a dialog, not a drop-down list.

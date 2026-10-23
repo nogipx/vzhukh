@@ -34,6 +34,7 @@ class AndroidVpnBridge {
       'config': config,
       'routingMode': routing?.mode.name ?? 'blacklist',
       'routingPackages': routing?.packages ?? const <String>[],
+      'dnsServers': IosVpnBridge.dnsServersFor(hops),
     });
   }
 

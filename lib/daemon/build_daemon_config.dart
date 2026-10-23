@@ -25,6 +25,7 @@ class BuildDaemonConfig {
     required String connectedLabel,
     String? connectedTunnelRouteId,
     required RoutingRules rules,
+    bool leaveOtherVpns = false,
   }) async {
     final routes = <Map<String, dynamic>>[
       {
@@ -52,6 +53,7 @@ class BuildDaemonConfig {
     return {
       'routes': routes,
       if (rules.bypass.isNotEmpty) 'bypass': rules.bypass,
+      if (leaveOtherVpns) 'capture': {'leaveVpns': true},
       'rules': rulesSection(rules, connectedTunnelRouteId: connectedTunnelRouteId),
     };
   }
@@ -81,6 +83,7 @@ class BuildDaemonConfig {
           RuleAction.route =>
             {'action': 'route', 'route': _routeFor(rule, connectedTunnelRouteId)},
           RuleAction.direct => {'action': 'direct'},
+          RuleAction.vpn => {'action': 'vpn', 'vpn': rule.vpnId},
           RuleAction.block => {'action': 'block'},
           RuleAction.system => {'action': 'system'},
         };

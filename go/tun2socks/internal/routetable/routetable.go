@@ -2,12 +2,11 @@
 // through if the tunnel's routes were not there".
 //
 // The daemon binds every socket it opens past the tunnel to an interface.
-// Binding them all to the default one (Wi-Fi) breaks other VPNs: a
-// corporate VPN routes its networks into its own interface with routes more
-// specific than the tunnel's, and a socket bound to Wi-Fi would ignore them.
-// Looking the destination up in the kernel's table, minus the tunnel's own
-// routes, sends corporate addresses into the corporate VPN and everything
-// else out of Wi-Fi, as macOS would without vzhukh.
+// Direct traffic is bound to Wi-Fi or Ethernet and a rule's VPN to that
+// VPN's interface, whatever the table says. What a rule leaves to the system
+// is looked up in the kernel's table, minus the tunnel's own routes, which
+// sends corporate addresses into the corporate VPN and everything else out
+// of Wi-Fi, as macOS would without vzhukh.
 package routetable
 
 import "net/netip"

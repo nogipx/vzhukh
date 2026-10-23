@@ -79,6 +79,17 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
     if (mounted) setState(() => _server = updated);
   }
 
+  Future<void> _editDns() async {
+    final result = await showDialog<List<String>>(
+      context: context,
+      builder: (_) => _DnsDialog(initial: _server.dnsServers),
+    );
+    if (result == null) return;
+    final updated = _server.copyWith(dnsServers: result);
+    await _repo.saveServer(updated);
+    if (mounted) setState(() => _server = updated);
+  }
+
   Future<void> _load() async {
     final connections = await _repo.getConnections(widget.server.id);
 
@@ -134,6 +145,19 @@ class _ServerDetailScreenState extends State<ServerDetailScreen> {
             _AppRoutingTile(appSet: _appSet, onTap: _openAppPicker),
             const Divider(),
           ],
+          if (Platform.isAndroid || Platform.isIOS) ...[
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.dns_outlined),
+              title: const Text('DNS servers'),
+              subtitle: Text(_server.dnsServers.isEmpty
+                  ? '${Server.defaultDnsServers.join(', ')} (default)'
+                  : _server.dnsServers.join(', ')),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: _editDns,
+            ),
+            const Divider(),
+          ],
           ListTile(
             contentPadding: EdgeInsets.zero,
             leading: const Icon(Icons.admin_panel_settings_outlined),
@@ -187,6 +211,67 @@ class _AppRoutingTile extends StatelessWidget {
       subtitle: Text(set == null ? 'All apps' : '${set.name} · ${describeAppSet(set.config)}'),
       trailing: const Icon(Icons.chevron_right),
       onTap: onTap,
+    );
+  }
+}
+
+/// Asks for the resolvers as IPv4 addresses separated by commas or spaces;
+/// empty means the defaults.
+class _DnsDialog extends StatefulWidget {
+  final List<String> initial;
+
+  const _DnsDialog({required this.initial});
+
+  @override
+  State<_DnsDialog> createState() => _DnsDialogState();
+}
+
+class _DnsDialogState extends State<_DnsDialog> {
+  late final _ctrl = TextEditingController(text: widget.initial.join(', '));
+  String? _error;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _save() {
+    final servers = _ctrl.text.split(RegExp(r'[\s,]+')).where((s) => s.isNotEmpty).toList();
+    final bad = servers.where((s) => InternetAddress.tryParse(s)?.type != InternetAddressType.IPv4);
+    if (bad.isNotEmpty) {
+      setState(() => _error = 'Not an IPv4 address: ${bad.first}');
+      return;
+    }
+    Navigator.pop(context, servers);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('DNS servers'),
+      content: TextField(
+        controller: _ctrl,
+        autofocus: true,
+        keyboardType: TextInputType.text,
+        decoration: InputDecoration(
+          hintText: Server.defaultDnsServers.join(', '),
+          helperText: 'Queried through this server, also when it is the last hop of a route. Empty for the defaults',
+          helperMaxLines: 2,
+          errorText: _error,
+        ),
+        onSubmitted: (_) => _save(),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          onPressed: _save,
+          child: const Text('Save'),
+        ),
+      ],
     );
   }
 }

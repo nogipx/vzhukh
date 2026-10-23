@@ -8,6 +8,7 @@ import '../../daemon/daemon_installer.dart';
 import '../../daemon/daemon_models.dart';
 import '../../daemon/traffic_analysis.dart';
 import '../../models/routing_rule.dart';
+import '../../storage/helper_settings.dart';
 import '../../storage/routing_rules_repository.dart';
 import '../../vpn/macos_daemon_backend.dart';
 import '../../vpn/vpn_controller.dart';
@@ -83,6 +84,10 @@ class _TrafficScreenState extends State<TrafficScreen> {
   bool _statsSupported = true;
 
   Map<String, String> _ruleNames = {};
+
+  /// VPN ids to names, from the rules: a connection into a VPN carries the
+  /// VPN's id where others carry their route's.
+  Map<String, String> _vpnNames = {};
   bool _paused = false;
 
   /// What the helper says about recording; null from one that always
@@ -169,6 +174,10 @@ class _TrafficScreenState extends State<TrafficScreen> {
     if (tick % 10 == 0) {
       final rules = await _rulesRepo.load();
       _ruleNames = {for (final r in rules.rules) r.id: r.name};
+      _vpnNames = {
+        for (final r in rules.rules)
+          if (r.vpnId != null) r.vpnId!: r.vpnName ?? r.vpnId!,
+      };
     }
     try {
       final snap = await _mac.client.flows(since: _seq);
@@ -251,6 +260,7 @@ class _TrafficScreenState extends State<TrafficScreen> {
   String _routeName(String? id) {
     if (id == null || id.isEmpty) return '';
     final s = _mac.daemonStatus.value?.route(id);
+    if (s == null && _vpnNames.containsKey(id)) return _vpnNames[id]!;
     return s == null || s.name.isEmpty ? id : s.name;
   }
 
@@ -261,6 +271,7 @@ class _TrafficScreenState extends State<TrafficScreen> {
         TrafficDim.action => switch (value) {
             'route' => 'through a route',
             'direct' => 'direct',
+            'vpn' => 'into a VPN',
             'block' => 'blocked',
             'system' => 'left to macOS',
             '' => 'undecided',
@@ -815,13 +826,16 @@ class _FlowDetails extends StatelessWidget {
       ('vzhukh opened', flow.dialed),
       ('Decision', switch (flow.action) {
         'route' => 'through route "$routeName"',
-        'direct' => 'directly, past the tunnel',
+        'direct' => 'directly, out of Wi-Fi',
+        'vpn' => 'into VPN "$routeName"',
         'block' => 'blocked',
         'system' => 'left to macOS (another VPN)',
         _ => flow.action,
       }),
       ('Because of', flow.ruleId == null
-          ? 'no rule matched: default'
+          ? flow.action == 'vpn'
+              ? 'no rule matched: ${flow.matched ?? 'the VPN\'s own'}'
+              : 'no rule matched: default'
           : 'rule "${ruleName ?? flow.ruleId}"${flow.matched == null ? '' : ': ${flow.matched}'}'),
       ('Sent / received', '${formatBytes(flow.upload)} / ${formatBytes(flow.download)}'),
       ('Started', flow.started.toLocal().toString()),
@@ -896,11 +910,23 @@ class _HelperCard extends StatefulWidget {
 class _HelperCardState extends State<_HelperCard> {
   String? _bundledVersion;
   bool _busy = false;
+  bool _leaveOtherVpns = false;
 
   @override
   void initState() {
     super.initState();
     _readBundledVersion();
+    const HelperSettings().leaveOtherVpns().then((v) {
+      if (mounted) setState(() => _leaveOtherVpns = v);
+    });
+  }
+
+  Future<void> _toggleLeaveOtherVpns() async {
+    final on = !_leaveOtherVpns;
+    await const HelperSettings().setLeaveOtherVpns(on);
+    if (!mounted) return;
+    setState(() => _leaveOtherVpns = on);
+    showToast(context, 'Takes effect the next time you connect.');
   }
 
   Future<void> _readBundledVersion() async {
@@ -1002,6 +1028,14 @@ class _HelperCardState extends State<_HelperCard> {
                   ActionSheetButton(
                     title: 'Helper',
                     actions: () => [
+                      SheetAction(
+                        'In front of other VPNs',
+                        _toggleLeaveOtherVpns,
+                        icon: Icons.business,
+                        subtitle: 'Their traffic shows here and follows the rules. '
+                            'Turn off for a VPN client that fights over its routes.',
+                        checked: !_leaveOtherVpns,
+                      ),
                       SheetAction(
                         'Uninstall helper',
                         () => _run(() => const UninstallDaemon()(), 'Helper removed'),

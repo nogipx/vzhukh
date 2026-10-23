@@ -1,5 +1,5 @@
 // Package router decides where a connection goes: through one of the
-// configured routes, straight out, or nowhere.
+// configured routes, straight out, into another VPN, or nowhere.
 //
 // It is pure: it sees what the daemon already knows about a connection —
 // which app opened it, which domain it is for, where it is headed — and
@@ -21,13 +21,19 @@ type Action string
 const (
 	// ActionRoute sends the connection through the SSH chain named by Route.
 	ActionRoute Action = "route"
-	// ActionDirect sends it out of the physical interface, as if the tunnel
-	// were not there.
+	// ActionDirect sends it out of the physical interface, Wi-Fi or
+	// Ethernet, and never into another VPN, even one that has a route for
+	// the address.
 	ActionDirect Action = "direct"
+	// ActionVPN sends it into the VPN named by VPN: another VPN's tunnel
+	// interface, a corporate one typically. Its names are answered by that
+	// VPN's resolvers. While the VPN is down the connection is refused.
+	ActionVPN Action = "vpn"
 	// ActionBlock refuses it.
 	ActionBlock Action = "block"
 	// ActionSystem leaves the connection to macOS and whatever else is
-	// installed: a corporate VPN, typically. Its names get real answers
+	// installed: a corporate VPN, typically. Superseded by ActionVPN, and
+	// kept for rules written before it. Its names get real answers
 	// from the resolver the system has for them, so the connection goes
 	// where the system routes it and never enters the tunnel at all.
 	ActionSystem Action = "system"
@@ -65,6 +71,7 @@ type Rule struct {
 
 	Action Action `json:"action"`
 	Route  string `json:"route,omitempty"`
+	VPN    string `json:"vpn,omitempty"`
 
 	Disabled bool `json:"disabled,omitempty"`
 }
@@ -80,6 +87,8 @@ type Config struct {
 type Decision struct {
 	Action Action `json:"action"`
 	Route  string `json:"route,omitempty"`
+	// VPN identifies the VPN for ActionVPN, as the daemon's VPN list does.
+	VPN string `json:"vpn,omitempty"`
 
 	// RuleID is the rule that matched, empty when the default applied.
 	RuleID string `json:"ruleId,omitempty"`
@@ -161,8 +170,14 @@ func checkDecision(d Decision, known map[string]bool) (Decision, error) {
 		if !known[d.Route] {
 			return d, fmt.Errorf("unknown route %q", d.Route)
 		}
-	case ActionDirect, ActionBlock, ActionSystem:
+		d.VPN = ""
+	case ActionVPN:
+		if d.VPN == "" {
+			return d, errors.New("action vpn names no VPN")
+		}
 		d.Route = ""
+	case ActionDirect, ActionBlock, ActionSystem:
+		d.Route, d.VPN = "", ""
 	case "":
 		return d, errors.New("no action")
 	default:
@@ -172,7 +187,7 @@ func checkDecision(d Decision, known map[string]bool) (Decision, error) {
 }
 
 func compile(rule Rule, known map[string]bool) (compiled, error) {
-	result, err := checkDecision(Decision{Action: rule.Action, Route: rule.Route}, known)
+	result, err := checkDecision(Decision{Action: rule.Action, Route: rule.Route, VPN: rule.VPN}, known)
 	if err != nil {
 		return compiled{}, err
 	}
@@ -364,16 +379,30 @@ func (r *Router) UsesDomains() bool {
 	return false
 }
 
-// BypassPrefixes are the addresses of "leave to the system" rules that
-// match by destination alone, with no apps and no ports. Whatever reaches
-// them can be kept out of the tunnel by the routing table rather than by
-// the rule, which is what another VPN's gateway needs: its own traffic
-// never passes through here at all.
+// BypassPrefixes are addresses kept out of the tunnel by the routing table
+// rather than by a rule, which is what another VPN's gateway needs: its own
+// traffic never passes through here at all, so it survives the daemon
+// restarting. They come from rules that match by destination alone, with
+// no apps and no ports, and that do not send it anywhere the daemon has to
+// carry it: "leave to the system" rules, and direct ones for public
+// addresses. Private, loopback and wide prefixes stay with the rule; they
+// are not a gateway, and pinning them to Wi-Fi could take a whole network
+// away from where it belongs.
 func (r *Router) BypassPrefixes() []netip.Prefix {
 	var out []netip.Prefix
 	for _, rule := range r.rules {
-		if rule.system && len(rule.apps) == 0 && len(rule.ports) == 0 {
+		if len(rule.apps) > 0 || len(rule.ports) > 0 {
+			continue
+		}
+		switch {
+		case rule.system:
 			out = append(out, rule.cidrs...)
+		case rule.result.Action == ActionDirect:
+			for _, prefix := range rule.cidrs {
+				if addr := prefix.Addr(); addr.IsGlobalUnicast() && !addr.IsPrivate() && prefix.Bits() >= addr.BitLen()/2 {
+					out = append(out, prefix)
+				}
+			}
 		}
 	}
 	return out

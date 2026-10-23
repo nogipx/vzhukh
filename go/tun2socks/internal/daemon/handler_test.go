@@ -13,6 +13,7 @@ import (
 	"time"
 
 	singbuf "github.com/sagernet/sing/common/buf"
+	"github.com/sagernet/sing/common/control"
 	M "github.com/sagernet/sing/common/metadata"
 	"golang.org/x/net/dns/dnsmessage"
 
@@ -72,6 +73,11 @@ type fakeDirect struct {
 	realIP    netip.Addr
 	dns       [][]byte
 	systemDNS []string
+	vpnDNS    []string
+
+	// answer is what the VPN's DNS replies, answerErr how it fails.
+	answer    []byte
+	answerErr error
 }
 
 func (d *fakeDirect) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
@@ -81,6 +87,53 @@ func (d *fakeDirect) DialContext(ctx context.Context, network, address string) (
 
 func (d *fakeDirect) ListenPacket(ctx context.Context) (net.PacketConn, error) {
 	return net.ListenPacket("udp4", "127.0.0.1:0")
+}
+
+func (d *fakeDirect) DialSystem(ctx context.Context, network, address string) (net.Conn, error) {
+	d.record("system " + address)
+	return echoConn(), nil
+}
+
+func (d *fakeDirect) ListenPacketSystem(ctx context.Context, dst netip.Addr) (net.PacketConn, error) {
+	return net.ListenPacket("udp4", "127.0.0.1:0")
+}
+
+func (d *fakeDirect) Control() (control.Func, error) { return nil, nil }
+
+func (d *fakeDirect) ControlVPN(vpn string) (control.Func, error) {
+	if vpn == "down" {
+		return nil, errVPNDown{vpn}
+	}
+	return nil, nil
+}
+
+func (d *fakeDirect) ControlSystem(dst netip.Addr) (control.Func, error) { return nil, nil }
+
+// VPN "down" is not connected; every other one is.
+func (d *fakeDirect) DialVPN(ctx context.Context, vpn, network, address string) (net.Conn, error) {
+	if vpn == "down" {
+		return nil, errVPNDown{vpn}
+	}
+	d.record("vpn " + vpn + " " + address)
+	return echoConn(), nil
+}
+
+func (d *fakeDirect) ListenPacketVPN(ctx context.Context, vpn string) (net.PacketConn, error) {
+	if vpn == "down" {
+		return nil, errVPNDown{vpn}
+	}
+	return net.ListenPacket("udp4", "127.0.0.1:0")
+}
+
+func (d *fakeDirect) LookupIPv4VPN(ctx context.Context, vpn, host string) (netip.Addr, error) {
+	return d.LookupIPv4(ctx, "vpn "+vpn+" "+host)
+}
+
+func (d *fakeDirect) ExchangeVPNDNS(ctx context.Context, vpn string, query []byte) ([]byte, error) {
+	d.mu.Lock()
+	d.vpnDNS = append(d.vpnDNS, vpn)
+	d.mu.Unlock()
+	return d.answer, d.answerErr
 }
 
 func (d *fakeDirect) LookupIPv4(ctx context.Context, host string) (netip.Addr, error) {
@@ -509,10 +562,10 @@ func TestNamesLeftToTheSystemGetRealAnswersFromItsResolver(t *testing.T) {
 	}
 }
 
-func TestSystemConnectionsThatArriveAreDialedDirectly(t *testing.T) {
+func TestSystemConnectionsThatArriveGoWhereTheSystemWould(t *testing.T) {
 	f := newFixture(t, []router.Rule{{ID: "corp", CIDRs: []string{"172.16.0.0/12"}, Action: router.ActionSystem}})
 	f.tcp(t, netip.MustParseAddrPort("172.19.0.1:9"), netip.MustParseAddrPort("172.16.20.10:443"), []byte("x"))
-	if d := f.direct.got(); len(d) != 1 || d[0] != "172.16.20.10:443" {
+	if d := f.direct.got(); len(d) != 1 || d[0] != "system 172.16.20.10:443" {
 		t.Fatalf("direct dials %v", d)
 	}
 }
@@ -641,5 +694,104 @@ func TestUDPThroughARouteGoesViaUdpgw(t *testing.T) {
 	<-done
 	if fl := f.lastFlow(t); fl.Network != "udp" || fl.Action != "route" || fl.Upload != 4 || fl.Download != 4 {
 		t.Fatalf("flow %+v", fl)
+	}
+}
+
+func dnsAnswer(t *testing.T, name string, addr netip.Addr) []byte {
+	t.Helper()
+	b := dnsmessage.NewBuilder(nil, dnsmessage.Header{ID: 7, Response: true})
+	b.StartQuestions()
+	b.Question(dnsmessage.Question{Name: dnsmessage.MustNewName(name), Type: dnsmessage.TypeA, Class: dnsmessage.ClassINET})
+	b.StartAnswers()
+	b.AResource(dnsmessage.ResourceHeader{Name: dnsmessage.MustNewName(name), Class: dnsmessage.ClassINET, TTL: 30},
+		dnsmessage.AResource{A: addr.As4()})
+	out, err := b.Finish()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// A name a rule sends into a VPN gets a real answer from that VPN's DNS. A
+// connection to the address that still reaches the tunnel, one the VPN has
+// no route for, is known by that name and goes into the VPN.
+func TestNamesSentIntoAVPNAreAnsweredByItAndFollowedToIt(t *testing.T) {
+	f := newFixture(t, []router.Rule{{ID: "corp", Domains: []string{"corp.example"}, Action: router.ActionVPN, VPN: "app:/Applications/Corp.app"}})
+	real := netip.MustParseAddr("203.0.113.5")
+	f.direct.answer = dnsAnswer(t, "git.corp.example.", real)
+
+	conn := newPacketConn()
+	go f.h.serveDNS(context.Background(), conn)
+	defer conn.Close()
+	conn.in <- packet{dnsQuery(t, "git.corp.example.", dnsmessage.TypeA), M.SocksaddrFrom(netip.MustParseAddr("172.19.0.2"), 53)}
+	reply := <-conn.out
+	var m dnsmessage.Message
+	if err := m.Unpack(reply.data); err != nil || len(m.Answers) != 1 ||
+		netip.AddrFrom4(m.Answers[0].Body.(*dnsmessage.AResource).A) != real {
+		t.Fatalf("answer %+v %v", m, err)
+	}
+	if len(f.direct.vpnDNS) != 1 || f.direct.vpnDNS[0] != "app:/Applications/Corp.app" {
+		t.Fatalf("VPN DNS asked %v", f.direct.vpnDNS)
+	}
+
+	f.tcp(t, netip.MustParseAddrPort("172.19.0.1:9"), netip.AddrPortFrom(real, 22), []byte("x"))
+	if d := f.direct.got(); len(d) != 1 || d[0] != "vpn app:/Applications/Corp.app 203.0.113.5:22" {
+		t.Fatalf("dials %v", d)
+	}
+	if flow := f.lastFlow(t); flow.Domain != "git.corp.example" || flow.Route != "app:/Applications/Corp.app" {
+		t.Fatalf("flow %+v", flow)
+	}
+}
+
+// A rule's VPN that is not connected refuses the connection rather than
+// letting it go anywhere else.
+func TestAVPNThatIsDownRefuses(t *testing.T) {
+	f := newFixture(t, []router.Rule{{ID: "corp", CIDRs: []string{"203.0.113.0/24"}, Action: router.ActionVPN, VPN: "down"}})
+	_, err := f.tcp(t, netip.MustParseAddrPort("172.19.0.1:9"), netip.MustParseAddrPort("203.0.113.5:443"), []byte("x"))
+	if !errors.As(err, new(errVPNDown)) {
+		t.Fatalf("err %v", err)
+	}
+	if d := f.direct.got(); len(d) != 0 {
+		t.Fatalf("dials %v", d)
+	}
+}
+
+// What no rule decides goes into the VPN whose network or domain it is, as
+// it would without vzhukh; a rule still has the last word.
+func TestAVPNKeepsItsOwnTrafficUnlessARuleSaysOtherwise(t *testing.T) {
+	f := newFixture(t, []router.Rule{{ID: "lan", CIDRs: []string{"172.16.5.0/24"}, Action: router.ActionDirect}})
+	f.h.opts.VPNs = func() []VPN {
+		return []VPN{{ID: "corp", Name: "Corp", Domains: []string{"corp.example"},
+			Nets: []netip.Prefix{netip.MustParsePrefix("172.16.0.0/16")}}}
+	}
+
+	f.tcp(t, netip.MustParseAddrPort("172.19.0.1:9"), netip.MustParseAddrPort("172.16.20.10:443"), []byte("x"))
+	f.tcp(t, netip.MustParseAddrPort("172.19.0.1:10"), netip.MustParseAddrPort("172.16.5.7:443"), []byte("x"))
+	got := f.direct.got()
+	if len(got) != 2 || got[0] != "vpn corp 172.16.20.10:443" || got[1] != "172.16.5.7:443" {
+		t.Fatalf("dials %v", got)
+	}
+
+	if !f.h.realAnswer("git.corp.example") || f.h.realAnswer("example.com") {
+		t.Fatal("only the VPN's names get real answers")
+	}
+}
+
+// A name whose VPN is down fails at once, not after the client's timeout.
+func TestNamesOfAVPNThatIsDownFailAtOnce(t *testing.T) {
+	f := newFixture(t, []router.Rule{{ID: "corp", Domains: []string{"corp.example"}, Action: router.ActionVPN, VPN: "down"}})
+	f.direct.answerErr = errVPNDown{"down"}
+	conn := newPacketConn()
+	go f.h.serveDNS(context.Background(), conn)
+	defer conn.Close()
+	conn.in <- packet{dnsQuery(t, "git.corp.example.", dnsmessage.TypeA), M.SocksaddrFrom(netip.MustParseAddr("172.19.0.2"), 53)}
+	select {
+	case reply := <-conn.out:
+		var m dnsmessage.Message
+		if err := m.Unpack(reply.data); err != nil || m.RCode != dnsmessage.RCodeServerFailure || !m.Response {
+			t.Fatalf("reply %+v %v", m.Header, err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no reply")
 	}
 }

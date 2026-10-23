@@ -75,6 +75,14 @@ type DarwinPlatform struct {
 	hijacked   []netip.Addr
 	captureDNS bool
 	bypass4    []netip.Prefix
+
+	// frontVPNs puts the tunnel in front of other VPNs (see frontOfVPNs).
+	frontVPNs bool
+
+	vpnMu     sync.Mutex
+	vpnAt     time.Time
+	vpns      []VPN
+	vpnOwners map[string]vpnOwner
 }
 
 // NewDarwinPlatform starts watching the network. stateDir keeps the DNS
@@ -104,7 +112,14 @@ func NewDarwinPlatform(stateDir string, logf func(string, ...any)) (*DarwinPlatf
 		return nil, err
 	}
 	p.netMon, p.ifMon = netMon, ifMon
-	p.direct = &directNet{iface: p.interfaceFor, heal: p.healRoutes, logf: logf}
+	p.direct = &directNet{
+		physical: p.physicalInterface,
+		iface:    p.interfaceFor,
+		vpn:      p.vpn,
+		heal:     p.healRoutes,
+		logf:     logf,
+		dead:     deadHosts{ttl: 10 * time.Minute},
+	}
 	var debounce *time.Timer
 	netMon.RegisterCallback(func() {
 		p.invalidateRoutes()
@@ -115,6 +130,7 @@ func NewDarwinPlatform(stateDir string, logf func(string, ...any)) (*DarwinPlatf
 			debounce = time.AfterFunc(2*time.Second, func() {
 				p.reassertRoutes()
 				p.refreshSystemDNS()
+				p.frontOfVPNs()
 			})
 		} else {
 			debounce.Reset(2 * time.Second)
@@ -128,6 +144,12 @@ func NewDarwinPlatform(stateDir string, logf func(string, ...any)) (*DarwinPlatf
 			name = iface.Name
 		}
 		p.refreshUpstream()
+		// On another network a dead host may answer, and a failure may
+		// again be the routes' fault. Not on any routing change: repairing
+		// the routes is one.
+		p.direct.mu.Lock()
+		p.direct.dead.m = nil
+		p.direct.mu.Unlock()
 		p.mu.Lock()
 		p.pinBypassLocked()
 		callbacks := append([]func(string){}, p.callbacks...)
@@ -415,6 +437,7 @@ func (p *DarwinPlatform) invalidateRoutes() {
 	p.scopedMu.Lock()
 	p.scopedIfaces = nil
 	p.scopedMu.Unlock()
+	p.invalidateVPNs()
 }
 
 func (p *DarwinPlatform) defaultInterface() (int, string) {
@@ -423,6 +446,31 @@ func (p *DarwinPlatform) defaultInterface() (int, string) {
 		return 0, ""
 	}
 	return iface.Index, iface.Name
+}
+
+// physicalInterface is where direct traffic goes: Wi-Fi or Ethernet, never
+// another VPN. That is the default interface, unless a VPN made its own
+// tunnel the default; then it is the interface of a default route that
+// is not point-to-point, which macOS keeps scoped to it.
+func (p *DarwinPlatform) physicalInterface() (int, string) {
+	if iface := p.ifMon.DefaultInterface(); iface != nil && iface.Flags&net.FlagPointToPoint == 0 {
+		return iface.Index, iface.Name
+	}
+	entries, err := routetable.Entries()
+	if err != nil {
+		return 0, ""
+	}
+	for _, e := range entries {
+		if e.Prefix.Bits() != 0 || !e.Gateway.IsValid() {
+			continue
+		}
+		iface, err := p.finder.ByIndex(e.Index)
+		if err != nil || iface.Flags&net.FlagPointToPoint != 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		return iface.Index, iface.Name
+	}
+	return 0, ""
 }
 
 // refreshUpstream picks the DNS servers direct lookups go to: what the user
@@ -568,6 +616,9 @@ func (p *DarwinPlatform) Up(handler *Handler, capture *Capture, bypass []string)
 	p.pins.set("tunnel", []netip.Prefix{tunAddress4.Masked()})
 	p.bypass4 = exclude4
 	p.pinBypassLocked()
+
+	p.frontVPNs = capture == nil || len(capture.Routes) == 0 && !capture.LeaveVPNs
+	go p.frontOfVPNs()
 
 	p.captureDNS = setDNS
 	if !setDNS {

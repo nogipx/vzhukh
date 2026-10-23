@@ -9,13 +9,17 @@ import (
 	"net"
 	"net/netip"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
 
 	tun "github.com/sagernet/sing-tun"
+	"github.com/sagernet/sing-tun/ping"
 	singbuf "github.com/sagernet/sing/common/buf"
+	"github.com/sagernet/sing/common/control"
+	singlogger "github.com/sagernet/sing/common/logger"
 	M "github.com/sagernet/sing/common/metadata"
 	N "github.com/sagernet/sing/common/network"
 	"golang.org/x/net/dns/dnsmessage"
@@ -33,17 +37,36 @@ type RouteDialer interface {
 	DialContext(ctx context.Context, route, network, address string) (net.Conn, error)
 }
 
-// DirectNet reaches the internet past the tunnel, through the physical
-// interface.
+// DirectNet reaches past the tunnel: out of the physical interface, into
+// another VPN, or where macOS would send it.
 type DirectNet interface {
-	// DialContext accepts a name as well as an address; a name is resolved
-	// with the network's own DNS servers.
+	// DialContext goes out of the physical interface and never into
+	// another VPN. It accepts a name as well as an address; a name is
+	// resolved with the network's own DNS servers.
 	DialContext(ctx context.Context, network, address string) (net.Conn, error)
 	ListenPacket(ctx context.Context) (net.PacketConn, error)
 	LookupIPv4(ctx context.Context, host string) (netip.Addr, error)
 
 	// ExchangeDNS sends a raw query to the network's own DNS servers.
 	ExchangeDNS(ctx context.Context, query []byte) ([]byte, error)
+
+	// DialVPN and the rest go into the VPN with that ID and ask its DNS.
+	// They fail with errVPNDown while it is not connected.
+	DialVPN(ctx context.Context, vpn, network, address string) (net.Conn, error)
+	ListenPacketVPN(ctx context.Context, vpn string) (net.PacketConn, error)
+	LookupIPv4VPN(ctx context.Context, vpn, host string) (netip.Addr, error)
+	ExchangeVPNDNS(ctx context.Context, vpn string, query []byte) ([]byte, error)
+
+	// DialSystem and ListenPacketSystem go where macOS would send the
+	// connection, for rules that leave it to the system.
+	DialSystem(ctx context.Context, network, address string) (net.Conn, error)
+	ListenPacketSystem(ctx context.Context, dst netip.Addr) (net.PacketConn, error)
+
+	// Control, ControlVPN and ControlSystem bind a socket the way the
+	// dials above do, for pings.
+	Control() (control.Func, error)
+	ControlVPN(vpn string) (control.Func, error)
+	ControlSystem(dst netip.Addr) (control.Func, error)
 
 	// ExchangeSystemDNS sends a query to the resolver macOS has for name:
 	// a corporate VPN's, when it set one up for that domain.
@@ -55,10 +78,15 @@ type ProcessLookup func(network string, local netip.AddrPort) (procinfo.Process,
 
 // HandlerOptions are the handler's dependencies, all replaceable in tests.
 type HandlerOptions struct {
-	Routes  RouteDialer
-	Direct  DirectNet
-	Lookup  ProcessLookup
-	Pool    *fakedns.Pool
+	Routes RouteDialer
+	Direct DirectNet
+	Lookup ProcessLookup
+	Pool   *fakedns.Pool
+
+	// VPNs lists the other VPNs connected now. What no rule decides goes
+	// into the VPN whose network or DNS domain it is, as it would without
+	// vzhukh. Nil knows of none.
+	VPNs    func() []VPN
 	Flows   *flows.Table
 	Exclude []string
 
@@ -91,6 +119,20 @@ type Handler struct {
 
 	gwMu      sync.Mutex
 	noGateway map[string]time.Time
+
+	// downLogged is when each down VPN was last mentioned in the log.
+	downLogged map[string]time.Time
+
+	// answered remembers the names behind real answers: a connection to
+	// one of those addresses that reaches the tunnel still matches the
+	// rule for its name.
+	answeredMu sync.Mutex
+	answered   map[netip.Addr]answeredName
+}
+
+type answeredName struct {
+	name    string
+	expires time.Time
 }
 
 var _ tun.Handler = (*Handler)(nil)
@@ -126,7 +168,7 @@ func NewHandler(opts HandlerOptions) *Handler {
 		Pool:       opts.Pool,
 		Exclude:    opts.Exclude,
 		Forward:    h.forwardDNS,
-		RealAnswer: h.leftToSystem,
+		RealAnswer: h.realAnswer,
 	}
 	return h
 }
@@ -195,10 +237,20 @@ func (h *Handler) decideWhy(m router.Meta) (router.Decision, string, error) {
 		return router.Decision{}, "", errNoRules
 	}
 	d, why := r.DecideWhy(m)
+	if d.RuleID == "" && h.opts.VPNs != nil {
+		for _, v := range h.opts.VPNs() {
+			if claim, ok := v.claims(strings.TrimSuffix(strings.ToLower(m.Domain), "."), m.IP); ok {
+				return router.Decision{Action: router.ActionVPN, VPN: v.ID}, claim, nil
+			}
+		}
+	}
 	return d, why, nil
 }
 
-// PrepareConnection lets everything through to the handlers below.
+// PrepareConnection lets TCP and UDP through to the handlers below and
+// sends pings where the rules send the address: out of Wi-Fi, into a VPN,
+// or nowhere. A ping the rules send through a route, which cannot carry
+// one, or to a placeholder is answered by the stack itself, as before.
 func (h *Handler) PrepareConnection(
 	network string,
 	source M.Socksaddr,
@@ -206,7 +258,43 @@ func (h *Handler) PrepareConnection(
 	routeContext tun.DirectRouteContext,
 	timeout time.Duration,
 ) (tun.DirectRouteDestination, error) {
-	return nil, nil
+	if network != N.NetworkICMP {
+		return nil, nil
+	}
+	dst := destination.Addr.Unmap()
+	if h.opts.Pool.Contains(dst) {
+		return nil, nil
+	}
+	meta := router.Meta{IP: dst}
+	if name, ok := h.answeredName(dst); ok {
+		meta.Domain = name
+	}
+	d, _, err := h.decideWhy(meta)
+	if err != nil {
+		return nil, nil
+	}
+	var ctrl control.Func
+	switch d.Action {
+	case router.ActionBlock:
+		return nil, tun.ErrReset
+	case router.ActionDirect:
+		ctrl, err = h.opts.Direct.Control()
+	case router.ActionVPN:
+		ctrl, err = h.opts.Direct.ControlVPN(d.VPN)
+	case router.ActionSystem:
+		ctrl, err = h.opts.Direct.ControlSystem(dst)
+	default:
+		return nil, nil
+	}
+	if err != nil {
+		return nil, tun.ErrReset
+	}
+	pinger, err := ping.ConnectDestination(context.Background(), singlogger.NOP(), ctrl, dst, routeContext, timeout)
+	if err != nil {
+		h.opts.Logf("ping %s: %v", dst, err)
+		return nil, tun.ErrReset
+	}
+	return pinger, nil
 }
 
 // connInfo is what is learnt about a connection before it is decided.
@@ -245,6 +333,11 @@ func (h *Handler) describe(network string, source, destination netip.AddrPort) (
 		info.meta.Domain = name
 		info.flow.Domain = name
 		info.flow.DomainSource = "dns"
+	} else if name, ok := h.answeredName(dst); ok {
+		// Not info.domain: the address is what the app chose to dial.
+		info.meta.Domain = name
+		info.flow.Domain = name
+		info.flow.DomainSource = "dns"
 	}
 	return info, nil
 }
@@ -274,6 +367,9 @@ func (info connInfo) target() string {
 func (h *Handler) open(info connInfo, d router.Decision) *flows.Entry {
 	info.flow.Action = string(d.Action)
 	info.flow.Route = d.Route
+	if d.Action == router.ActionVPN {
+		info.flow.Route = d.VPN
+	}
 	info.flow.RuleID = d.RuleID
 	return h.opts.Flows.Open(info.flow)
 }
@@ -349,6 +445,11 @@ func (h *Handler) handleTCP(ctx context.Context, conn net.Conn, source, destinat
 
 func (h *Handler) dial(ctx context.Context, d router.Decision, info connInfo, entry *flows.Entry) (net.Conn, error) {
 	target := info.target()
+	if (d.Action == router.ActionVPN || d.Action == router.ActionSystem) && !h.opts.Pool.Contains(info.meta.IP) {
+		// The app looked the name up with the VPN's resolver already, or
+		// knew the address: dial what it chose.
+		target = netip.AddrPortFrom(info.meta.IP, info.meta.Port).String()
+	}
 	entry.Update(func(f *flows.Flow) { f.Dialed = target })
 
 	dialCtx, cancel := context.WithTimeout(ctx, h.opts.DialTimeout)
@@ -359,10 +460,14 @@ func (h *Handler) dial(ctx context.Context, d router.Decision, info connInfo, en
 		return nil, errBlocked
 	case router.ActionRoute:
 		return h.opts.Routes.DialContext(dialCtx, d.Route, "tcp", target)
-	case router.ActionDirect, router.ActionSystem:
-		// A system connection that still arrived here has no other route
-		// than the one the system would pick, which is what direct does.
+	case router.ActionDirect:
 		return h.opts.Direct.DialContext(dialCtx, "tcp", target)
+	case router.ActionVPN:
+		return h.opts.Direct.DialVPN(dialCtx, d.VPN, "tcp", target)
+	case router.ActionSystem:
+		// A system connection that still arrived here goes where the
+		// system would have sent it.
+		return h.opts.Direct.DialSystem(dialCtx, "tcp", target)
 	default:
 		return nil, fmt.Errorf("unknown action %q", d.Action)
 	}
@@ -494,7 +599,7 @@ func (h *Handler) handleUDP(ctx context.Context, conn N.PacketConn, source, dest
 	if d.Action == router.ActionRoute {
 		err = h.relayUDPRoute(ctx, conn, d.Route, info, entry)
 	} else {
-		err = h.relayUDP(ctx, conn, info, entry)
+		err = h.relayUDP(ctx, conn, d, info, entry)
 	}
 	entry.Close(err)
 	return err
@@ -668,11 +773,25 @@ func (h *Handler) markNoGateway(route string) {
 	h.noGateway[route] = time.Now().Add(time.Minute)
 }
 
-// relayUDP carries a UDP session out of the physical interface. Packets to
+// relayUDP carries a UDP session past the tunnel: out of the physical
+// interface, into a VPN, or where the system would send it. Packets to
 // placeholder addresses go to the real address of their name, and replies
 // from it come back looking as if the placeholder sent them.
-func (h *Handler) relayUDP(ctx context.Context, conn N.PacketConn, info connInfo, entry *flows.Entry) error {
-	out, err := h.opts.Direct.ListenPacket(ctx)
+func (h *Handler) relayUDP(ctx context.Context, conn N.PacketConn, d router.Decision, info connInfo, entry *flows.Entry) error {
+	var out net.PacketConn
+	var err error
+	lookup := h.opts.Direct.LookupIPv4
+	switch d.Action {
+	case router.ActionVPN:
+		out, err = h.opts.Direct.ListenPacketVPN(ctx, d.VPN)
+		lookup = func(ctx context.Context, host string) (netip.Addr, error) {
+			return h.opts.Direct.LookupIPv4VPN(ctx, d.VPN, host)
+		}
+	case router.ActionSystem:
+		out, err = h.opts.Direct.ListenPacketSystem(ctx, info.meta.IP)
+	default:
+		out, err = h.opts.Direct.ListenPacket(ctx)
+	}
 	if err != nil {
 		return err
 	}
@@ -696,7 +815,7 @@ func (h *Handler) relayUDP(ctx context.Context, conn N.PacketConn, info connInfo
 				return netip.AddrPort{}, errStalePlace
 			}
 			lookupCtx, cancel := context.WithTimeout(ctx, dnsExchangeLimit)
-			real, err = h.opts.Direct.LookupIPv4(lookupCtx, name)
+			real, err = lookup(lookupCtx, name)
 			cancel()
 			if err != nil {
 				return netip.AddrPort{}, err
@@ -784,9 +903,8 @@ func (h *Handler) serveDNS(ctx context.Context, conn N.PacketConn) error {
 		go func() {
 			answerCtx, cancel := context.WithTimeout(ctx, dnsExchangeLimit)
 			defer cancel()
-			resp, err := h.dns.Answer(answerCtx, query)
-			if err != nil {
-				h.opts.Logf("dns: %v", err)
+			resp, ok := h.answerDNS(answerCtx, query)
+			if !ok {
 				return
 			}
 			conn.WritePacket(singbuf.As(resp), dest)
@@ -807,10 +925,10 @@ func (h *Handler) serveDNSOverTCP(ctx context.Context, conn net.Conn) error {
 			return nil
 		}
 		answerCtx, cancel := context.WithTimeout(ctx, dnsExchangeLimit)
-		resp, err := h.dns.Answer(answerCtx, query)
+		resp, ok := h.answerDNS(answerCtx, query)
 		cancel()
-		if err != nil {
-			return err
+		if !ok {
+			return nil
 		}
 		binary.BigEndian.PutUint16(lenBuf, uint16(len(resp)))
 		if _, err := conn.Write(append(lenBuf, resp...)); err != nil {
@@ -819,28 +937,112 @@ func (h *Handler) serveDNSOverTCP(ctx context.Context, conn net.Conn) error {
 	}
 }
 
+// answerDNS answers one query, or reports that there is nothing to send. A
+// name whose VPN is down gets SERVFAIL at once rather than a wait for the
+// timeout, and the log hears of each VPN once a minute: names a rule sends
+// into a VPN are asked about all the time while it is off.
+func (h *Handler) answerDNS(ctx context.Context, query []byte) ([]byte, bool) {
+	resp, err := h.dns.Answer(ctx, query)
+	if err == nil {
+		return resp, true
+	}
+	var down errVPNDown
+	if !errors.As(err, &down) {
+		h.opts.Logf("dns: %v", err)
+		return nil, false
+	}
+	h.gwMu.Lock()
+	if h.downLogged == nil {
+		h.downLogged = map[string]time.Time{}
+	}
+	quiet := time.Since(h.downLogged[down.id]) < time.Minute
+	if !quiet {
+		h.downLogged[down.id] = time.Now()
+	}
+	h.gwMu.Unlock()
+	if !quiet {
+		h.opts.Logf("dns: %v; its names fail until it is", err)
+	}
+	var msg dnsmessage.Message
+	if msg.Unpack(query) != nil {
+		return nil, false
+	}
+	msg.Header.Response = true
+	msg.Header.RCode = dnsmessage.RCodeServerFailure
+	msg.Answers, msg.Authorities, msg.Additionals = nil, nil, nil
+	out, err := msg.Pack()
+	return out, err == nil
+}
+
 // forwardDNS sends a query that gets a real answer. Local names always go to
 // the network's own resolver. Anything else follows the rules for its name:
 // through a route it goes to RemoteDNS over TCP, so the lookup does not
 // leak, otherwise to the network's resolver.
 func (h *Handler) forwardDNS(ctx context.Context, query []byte, name string) ([]byte, error) {
-	if h.leftToSystem(name) {
-		return h.opts.Direct.ExchangeSystemDNS(ctx, query, name)
-	}
-	if !h.dns.Excluded(name) {
-		d, err := h.decide(router.Meta{Domain: name, Port: 53})
-		if err == nil && d.Action == router.ActionRoute {
-			return h.exchangeTCP(ctx, d.Route, query)
-		}
+	switch d, err := h.decide(router.Meta{Domain: name, Port: 53}); {
+	case err != nil:
+	case d.Action == router.ActionSystem:
+		return h.remember(h.opts.Direct.ExchangeSystemDNS(ctx, query, name))
+	case d.Action == router.ActionVPN:
+		return h.remember(h.opts.Direct.ExchangeVPNDNS(ctx, d.VPN, query))
+	case d.Action == router.ActionRoute && !h.dns.Excluded(name):
+		return h.exchangeTCP(ctx, d.Route, query)
 	}
 	return h.opts.Direct.ExchangeDNS(ctx, query)
 }
 
-// leftToSystem is true for names a rule hands to the system. Rules naming an
-// app cannot match here: DNS queries come from mDNSResponder, not the app.
-func (h *Handler) leftToSystem(name string) bool {
+// realAnswer is true for names a rule sends into a VPN or leaves to the
+// system: they get real addresses from that VPN's resolvers, so that what
+// the VPN routes goes into it without passing through here, and what
+// needs a real address (ping, Kerberos) has one. Rules naming an app
+// cannot match here: DNS queries come from mDNSResponder, not the app.
+func (h *Handler) realAnswer(name string) bool {
 	d, err := h.decide(router.Meta{Domain: name, Port: 53})
-	return err == nil && d.Action == router.ActionSystem
+	return err == nil && (d.Action == router.ActionSystem || d.Action == router.ActionVPN)
+}
+
+// remember notes the names in a real answer by address, for as long as the
+// answer lives and at least a few minutes: apps keep addresses past the
+// TTL.
+func (h *Handler) remember(resp []byte, err error) ([]byte, error) {
+	if err != nil {
+		return resp, err
+	}
+	var msg dnsmessage.Message
+	if msg.Unpack(resp) != nil || len(msg.Questions) == 0 {
+		return resp, nil
+	}
+	name := strings.TrimSuffix(strings.ToLower(msg.Questions[0].Name.String()), ".")
+	now := time.Now()
+	h.answeredMu.Lock()
+	defer h.answeredMu.Unlock()
+	if h.answered == nil || len(h.answered) > 4096 {
+		h.answered = map[netip.Addr]answeredName{}
+	}
+	for _, a := range msg.Answers {
+		var addr netip.Addr
+		switch body := a.Body.(type) {
+		case *dnsmessage.AResource:
+			addr = netip.AddrFrom4(body.A)
+		case *dnsmessage.AAAAResource:
+			addr = netip.AddrFrom16(body.AAAA)
+		default:
+			continue
+		}
+		ttl := max(time.Duration(a.Header.TTL)*time.Second, 10*time.Minute)
+		h.answered[addr] = answeredName{name: name, expires: now.Add(min(ttl, 24*time.Hour))}
+	}
+	return resp, nil
+}
+
+func (h *Handler) answeredName(addr netip.Addr) (string, bool) {
+	h.answeredMu.Lock()
+	defer h.answeredMu.Unlock()
+	a, ok := h.answered[addr]
+	if !ok || time.Now().After(a.expires) {
+		return "", false
+	}
+	return a.name, true
 }
 
 func (h *Handler) exchangeTCP(ctx context.Context, route string, query []byte) ([]byte, error) {

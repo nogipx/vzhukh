@@ -110,6 +110,26 @@ void main() {
     expect((cfg['rules']['rules'] as List).single, containsPair('action', 'system'));
   });
 
+  test('VPN rules name their VPN, and other VPNs can be left alone', () async {
+    final cfg = await BuildDaemonConfig(_Routes([]), resolve)(
+      connected: [_hop('a.example')],
+      connectedLabel: 'A',
+      rules: const RoutingRules(rules: [
+        RoutingRule(id: 'c', name: 'corp', domains: ['corp.example'], action: RuleAction.vpn, vpnId: 'app:/Corp.app'),
+      ]),
+      leaveOtherVpns: true,
+    );
+    expect((cfg['rules']['rules'] as List).single, allOf(containsPair('action', 'vpn'), containsPair('vpn', 'app:/Corp.app')));
+    expect(cfg['capture'], {'leaveVpns': true});
+
+    final front = await BuildDaemonConfig(_Routes([]), resolve)(
+      connected: [_hop('a.example')],
+      connectedLabel: 'A',
+      rules: const RoutingRules(),
+    );
+    expect(front.containsKey('capture'), isFalse);
+  });
+
   test('rulesSection carries the enabled flag and routesUsed ignores disabled rules', () {
     const rules = RoutingRules(rules: [
       RoutingRule(id: 'a', name: 'on', domains: ['x.com'], action: RuleAction.direct),

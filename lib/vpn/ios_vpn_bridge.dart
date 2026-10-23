@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/services.dart';
 
+import '../models/server.dart';
 import '../models/tunnel_route.dart';
 
 /// What the system reports about the tunnel, which is not quite what the app
@@ -35,7 +36,13 @@ class IosVpnBridge {
   /// packet engine the same numbers.
   static const _address = '10.0.0.2/30';
   static const _mtu = 1500;
-  static const _dnsServers = ['8.8.8.8', '8.8.4.4'];
+
+  /// The resolvers for a chain: the last hop's, since queries leave from
+  /// there and only it may reach them. Shared with AndroidVpnBridge.
+  static List<String> dnsServersFor(List<ResolvedHop> hops) {
+    final own = hops.last.server.dnsServers;
+    return own.isEmpty ? Server.defaultDnsServers : own;
+  }
 
   Stream<IosTunnelStatus>? _status;
 
@@ -61,7 +68,7 @@ class IosVpnBridge {
       'hops': hops.map(hopToJson).toList(),
       'address': _address,
       'mtu': _mtu,
-      'dnsServers': _dnsServers,
+      'dnsServers': dnsServersFor(hops),
     };
 
     await _methods.invokeMethod<void>('startVpn', {'config': jsonEncode(config)});

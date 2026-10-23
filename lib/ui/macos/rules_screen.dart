@@ -1,11 +1,17 @@
+import 'dart:io';
+
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
+import '../../daemon/daemon_models.dart';
+import '../../daemon/resolve_system_rules.dart';
 import '../../models/routing_rule.dart';
 import '../../models/tunnel_route.dart';
 import '../../storage/route_repository.dart';
 import '../../models/rule_set.dart';
 import '../../storage/routing_rules_repository.dart';
 import '../../storage/rule_set_repository.dart';
+import '../../storage/import_proxifier_profile.dart';
 import '../../storage/set_archive.dart';
 import '../../sync/received_items.dart';
 import '../../vpn/vpn_controller.dart';
@@ -64,6 +70,17 @@ class RulesScreenState extends State<RulesScreen> {
       rules = _foldBypass(rules);
       await _repo.save(rules);
     }
+    var resolved = 0;
+    if (active.own && active.set != null && rules.rules.any((r) => r.action == RuleAction.system)) {
+      // "Leave to macOS" rules name the VPN they meant, once one is
+      // connected to tell by.
+      final result = const ResolveSystemRules()(rules, await _vpns());
+      if (result.changed > 0) {
+        rules = result.rules;
+        resolved = result.changed;
+        await _repo.save(rules);
+      }
+    }
     final routes = [
       ...await _routeRepo.getRoutes(),
       for (final r in ReceivedItems.instance.routes) r.value,
@@ -76,6 +93,24 @@ class RulesScreenState extends State<RulesScreen> {
         _active = active.set;
         _activeOwn = active.own;
       });
+    }
+    if (resolved > 0) {
+      await _apply();
+      if (mounted) {
+        showToast(context, '$resolved "Leave to macOS" ${resolved == 1 ? 'rule now names' : 'rules now name'} '
+            'its VPN, or goes direct.');
+      }
+    }
+  }
+
+  /// The other VPNs connected now; none when the helper is not there.
+  Future<List<DaemonVpn>> _vpns() async {
+    final mac = widget.vpn.macDaemon;
+    if (mac == null) return const [];
+    try {
+      return await mac.client.vpns();
+    } catch (_) {
+      return const [];
     }
   }
 
@@ -160,6 +195,65 @@ class RulesScreenState extends State<RulesScreen> {
     }
   }
 
+  /// Where Proxifier keeps its profiles, if it is installed.
+  static String? _proxifierProfiles() {
+    final home = Platform.environment['HOME'];
+    if (home == null) return null;
+    final dir = '$home/Library/Containers/com.initex.proxifier.v3.macos/Data/Profiles';
+    return Directory(dir).existsSync() ? dir : null;
+  }
+
+  /// One profile is one rule set, named after its file.
+  Future<void> _importProxifier() async {
+    final files = await openFiles(
+      initialDirectory: _proxifierProfiles(),
+      confirmButtonText: 'Import',
+      acceptedTypeGroups: const [XTypeGroup(label: 'Proxifier profile', extensions: ['ppx'])],
+    );
+    if (files.isEmpty) return;
+    final imported = <RuleSet>[];
+    final skipped = <String>[];
+    for (final file in files) {
+      final name = file.name.replaceFirst(RegExp(r'\.ppx$', caseSensitive: false), '');
+      try {
+        final result = const ImportProxifierProfile()(
+          await file.readAsString(),
+          id: RuleSetRepository.newId(),
+          name: name,
+        );
+        await _sets.save(result.set);
+        imported.add(result.set);
+        skipped.addAll(result.skipped.map((s) => files.length > 1 ? '$name / $s' : s));
+      } on FormatException catch (e) {
+        skipped.add('$name: ${e.message}');
+      }
+    }
+    if (imported.length == 1) {
+      await _select(imported.single.id);
+    } else {
+      await _load();
+    }
+    if (!mounted) return;
+    final what = imported.length == 1 ? '"${imported.single.name}"' : '${imported.length} rule sets';
+    if (skipped.isEmpty) {
+      showToast(context, 'Imported $what.');
+      return;
+    }
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(imported.isEmpty ? 'Nothing imported' : 'Imported $what'),
+        content: SizedBox(
+          width: 480,
+          child: SingleChildScrollView(
+            child: SelectableText('Left out:\n\n${skipped.join('\n')}'),
+          ),
+        ),
+        actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+      ),
+    );
+  }
+
   Future<void> _apply() async {
     try {
       await widget.vpn.applyRules();
@@ -186,6 +280,7 @@ class RulesScreenState extends State<RulesScreen> {
         const SheetAction.divider(),
         SheetAction('New rule set…', _newSet, icon: Icons.add),
         SheetAction('Import a rule set…', _importSet, icon: Icons.file_open_outlined),
+        SheetAction('Import from Proxifier…', _importProxifier, icon: Icons.file_open_outlined),
       ],
       child: Row(
         mainAxisSize: MainAxisSize.min,
@@ -233,11 +328,12 @@ class RulesScreenState extends State<RulesScreen> {
   /// connection.
   Future<void> edit({RoutingRule? existing, RoutingRule? draft}) async {
     final routes = await _routeRepo.getRoutes();
+    final vpns = await _vpns();
     if (!mounted) return;
     final result = await Navigator.push<RoutingRule>(
       context,
       MaterialPageRoute(
-        builder: (_) => RuleEditScreen(existing: existing, draft: draft, routes: routes),
+        builder: (_) => RuleEditScreen(existing: existing, draft: draft, routes: routes, vpns: vpns),
       ),
     );
     if (result == null) return;
@@ -258,6 +354,7 @@ class RulesScreenState extends State<RulesScreen> {
         RuleAction.route =>
           _routes.where((x) => x.id == r.routeId).firstOrNull?.label ?? 'Missing route',
         RuleAction.direct => 'Direct',
+        RuleAction.vpn => r.vpnName ?? 'VPN',
         RuleAction.block => 'Block',
         RuleAction.system => 'macOS',
       };
@@ -283,7 +380,11 @@ class RulesScreenState extends State<RulesScreen> {
 
   bool _matches(RoutingRule r) {
     if (_only != null) {
-      final kind = r.action == RuleAction.route ? RuleAction.connectedRoute : r.action;
+      final kind = switch (r.action) {
+        RuleAction.route => RuleAction.connectedRoute,
+        RuleAction.system => RuleAction.vpn,
+        final a => a,
+      };
       if (kind != _only) return false;
     }
     final q = _search.text.trim().toLowerCase();
@@ -422,7 +523,7 @@ class RulesScreenState extends State<RulesScreen> {
               chip(null, 'All'),
               chip(RuleAction.connectedRoute, 'Tunnel'),
               chip(RuleAction.direct, 'Direct'),
-              chip(RuleAction.system, 'macOS'),
+              chip(RuleAction.vpn, 'VPN'),
               chip(RuleAction.block, 'Block'),
             ],
           ),
@@ -531,7 +632,7 @@ class _ActionBadge extends StatelessWidget {
         : switch (action) {
             RuleAction.connectedRoute || RuleAction.route => theme.colorScheme.primary,
             RuleAction.direct => colors.info,
-            RuleAction.system => colors.warning,
+            RuleAction.vpn || RuleAction.system => colors.warning,
             RuleAction.block => colors.danger,
           };
     return Container(

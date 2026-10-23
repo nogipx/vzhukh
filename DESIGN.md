@@ -165,7 +165,9 @@ apps → TUN (VpnService) → engine (gVisor) → chains → SSH → server
   - quick retries while the network comes back.
 - A `ConnectivityManager` default-network callback nudges the chain on every
   network change. It also keeps `setUnderlyingNetworks` current.
-- DNS goes to the far end over TCP. UDP goes through udpgw when the server
+- DNS goes to the far end over TCP, to the resolvers set on the last hop's
+  server (8.8.8.8 and 8.8.4.4 when none are), so a resolver only that
+  server reaches works; the same on iOS. UDP goes through udpgw when the server
   has it.
 - The app only starts, stops and polls the status (`vpnStatus`).
 - Debug builds take

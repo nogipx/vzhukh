@@ -122,6 +122,13 @@ class DaemonClient {
   Future<DaemonStatus> stop() async => DaemonStatus.fromJson(
       Map<String, dynamic>.from(await call('stop') as Map));
 
+  /// The other VPNs connected now. A helper older than this method answers
+  /// with an error.
+  Future<List<DaemonVpn>> vpns() async => [
+        for (final v in await call('vpns') as List? ?? const [])
+          DaemonVpn.fromJson(Map<String, dynamic>.from(v as Map)),
+      ];
+
   Future<FlowSnapshot> flows({int since = 0}) async => FlowSnapshot.fromJson(
       Map<String, dynamic>.from(await call('flows', {'since': since}) as Map));
 

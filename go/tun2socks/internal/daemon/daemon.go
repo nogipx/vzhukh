@@ -28,7 +28,7 @@ import (
 
 // Version is reported to the app, which offers to update an older helper.
 // Bump it with any change to the protocol or behaviour.
-const Version = "30"
+const Version = "37"
 
 // Config is everything the app sends to start the tunnel. Private keys
 // travel in Routes and stay in memory only.
@@ -60,6 +60,12 @@ type Capture struct {
 	// as before, so connections arrive by address and domain rules see only
 	// what the first bytes reveal (TLS SNI, HTTP Host).
 	KeepSystemDNS bool `json:"keepSystemDns,omitempty"`
+
+	// LeaveVPNs leaves other VPNs' networks to them. By default the tunnel
+	// takes them first, so their traffic is seen and follows the rules; a
+	// VPN client that restores its routes when anything is in front of them
+	// needs this instead. A capture narrowed by Routes leaves them anyway.
+	LeaveVPNs bool `json:"leaveVpns,omitempty"`
 }
 
 // parse checks the prefixes.
@@ -98,6 +104,8 @@ type Platform interface {
 	BaseDialer() sshtun.ContextDialer
 	// Lookup names the process behind a local socket.
 	Lookup() ProcessLookup
+	// VPNs lists the other VPNs connected now.
+	VPNs() []VPN
 
 	// OnNetworkChange registers a callback for changes of the default
 	// interface or its addresses.
@@ -210,6 +218,16 @@ func New(platform Platform, logf func(string, ...any)) (*Daemon, error) {
 
 // SetRules replaces the rules of a running tunnel, from the next
 // connection on. The routes they name must be ones the tunnel already has.
+// VPNs lists the other VPNs connected now, for rules to name. It works
+// whether the tunnel is up or not.
+func (d *Daemon) VPNs() []VPN {
+	vpns := d.platform.VPNs()
+	if vpns == nil {
+		vpns = []VPN{}
+	}
+	return vpns
+}
+
 func (d *Daemon) SetRules(rules router.Config) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -383,6 +401,7 @@ func (d *Daemon) Start(cfg Config) error {
 		Routes:    &d.routes,
 		Direct:    d.platform.Direct(),
 		Lookup:    d.platform.Lookup(),
+		VPNs:      d.platform.VPNs,
 		Pool:      d.pool,
 		Flows:     d.flows,
 		RemoteDNS: cfg.RemoteDNS,

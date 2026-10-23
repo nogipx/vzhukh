@@ -41,6 +41,41 @@ class DaemonRouteStatus {
       );
 }
 
+/// Another VPN connected on this Mac, as the helper sees it: [id] stays the
+/// same across reconnects, [interface] does not.
+@immutable
+class DaemonVpn {
+  final String id;
+  final String name;
+  final String interface;
+
+  /// The networks routed into it, and the names its resolvers answer for.
+  final List<String> prefixes;
+  final List<String> domains;
+
+  /// Whether it carries only its own networks. Such a VPN, a corporate
+  /// one typically, drops whatever else is sent into it.
+  final bool split;
+
+  const DaemonVpn({
+    required this.id,
+    required this.name,
+    required this.interface,
+    this.prefixes = const [],
+    this.domains = const [],
+    this.split = false,
+  });
+
+  factory DaemonVpn.fromJson(Map<String, dynamic> json) => DaemonVpn(
+        id: json['id'] as String,
+        name: json['name'] as String? ?? '',
+        interface: json['interface'] as String? ?? '',
+        prefixes: List<String>.from(json['prefixes'] as List? ?? const []),
+        domains: List<String>.from(json['domains'] as List? ?? const []),
+        split: json['split'] as bool? ?? false,
+      );
+}
+
 @immutable
 class DaemonStatus {
   final String version;

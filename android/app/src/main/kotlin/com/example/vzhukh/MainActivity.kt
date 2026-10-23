@@ -108,12 +108,15 @@ class MainActivity : FlutterFragmentActivity() {
     private var pendingConfig: String = ""
     private var pendingRoutingMode: String = "blacklist"
     private var pendingRoutingPackages: List<String> = emptyList()
+    private var pendingDnsServers: List<String> = emptyList()
 
     private fun handleStartVpn(args: Map<*, *>?, result: MethodChannel.Result) {
         pendingConfig = args?.get("config") as? String ?: ""
         pendingRoutingMode = args?.get("routingMode") as? String ?: "blacklist"
         @Suppress("UNCHECKED_CAST")
         pendingRoutingPackages = args?.get("routingPackages") as? List<String> ?: emptyList()
+        @Suppress("UNCHECKED_CAST")
+        pendingDnsServers = args?.get("dnsServers") as? List<String> ?: emptyList()
         // Check VPN permission first
         val intent = VpnService.prepare(this)
         if (intent != null) {
@@ -154,7 +157,7 @@ class MainActivity : FlutterFragmentActivity() {
 
     private fun startTunAndReply(result: MethodChannel.Result) {
         try {
-            vpnService!!.startTunnel(pendingConfig, pendingRoutingMode, pendingRoutingPackages)
+            vpnService!!.startTunnel(pendingConfig, pendingRoutingMode, pendingRoutingPackages, pendingDnsServers)
             result.success(true)
         } catch (e: Exception) {
             result.error("TUN_ERROR", e.message, null)

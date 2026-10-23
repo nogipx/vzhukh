@@ -207,6 +207,8 @@ func (s *IPCServer) call(req request) (any, error) {
 	case "clearFlows":
 		d.ClearFlows()
 		return d.Flows(0), nil
+	case "vpns":
+		return d.VPNs(), nil
 	case "nudge":
 		d.Nudge("asked by the app")
 		return d.Status(), nil

@@ -80,6 +80,7 @@ class VzhukhVpnService : VpnService() {
         config: String,
         routingMode: String = "blacklist",
         routingPackages: List<String> = emptyList(),
+        dnsServers: List<String> = emptyList(),
     ) {
         stopTunnel()
 
@@ -87,10 +88,19 @@ class VzhukhVpnService : VpnService() {
             .setSession("Vzhukh")
             .addAddress("10.0.0.2", 32)
             .addRoute("0.0.0.0", 0)
-            .addDnsServer("8.8.8.8")
-            .addDnsServer("8.8.4.4")
             .setMtu(1500)
             .setBlocking(false)
+
+        // IPv4 only: the TUN routes no IPv6, so an IPv6 resolver would be
+        // asked around the tunnel. The engine sends every query on to the
+        // far end over TCP, whichever resolver it is addressed to.
+        val added = dnsServers
+            .filter { it.matches(Regex("""\d{1,3}(\.\d{1,3}){3}""")) }
+            .count { runCatching { builder.addDnsServer(it) }.isSuccess }
+        if (added == 0) {
+            builder.addDnsServer("8.8.8.8")
+            builder.addDnsServer("8.8.4.4")
+        }
 
         if (routingMode == "whitelist") {
             // Only the listed apps are in; vzhukh is not one of them.

@@ -14,3 +14,8 @@ var ErrNotFound = errors.New("procinfo: no such socket")
 func Lookup(network string, local netip.AddrPort) (Process, error) {
 	return Process{}, errors.New("procinfo: unsupported platform")
 }
+
+// TunnelOwners is only implemented for macOS.
+func TunnelOwners() (map[int]Process, error) {
+	return nil, errors.New("procinfo: unsupported platform")
+}

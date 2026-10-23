@@ -38,7 +38,7 @@ String formatAgo(DateTime t) {
     'route' => (icon: Icons.vpn_lock, color: Theme.of(context).colorScheme.primary),
     'direct' => (icon: Icons.arrow_outward, color: c.info),
     'block' => (icon: Icons.block, color: c.danger),
-    'system' => (icon: Icons.business, color: c.warning),
+    'vpn' || 'system' => (icon: Icons.business, color: c.warning),
     _ => (icon: Icons.help_outline, color: c.muted),
   };
 }

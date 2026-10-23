@@ -199,12 +199,30 @@ Differences from the plan above:
   each other's. A backup left by that version is still restored at start.
 - The tunnel lives in 198.19.0.0/30 and placeholders in 198.18.0.0/16. The
   first choice, 172.19.0.0/30, sat inside the 172.16.0.0/12 of a corporate VPN.
-- Sockets past the tunnel are bound to the interface the routing table picks
-  for their destination with the tunnel's routes left out, so a corporate
-  VPN's networks go into it and the rest out of Wi-Fi.
-- "Leave to macOS" rules (action `system`) and a bypass list (addresses cut
-  out of the tunnel's routes) let another VPN keep its gateway and its
-  domains.
+- Sockets past the tunnel are bound to an interface, chosen by the rule.
+  Direct goes out of Wi-Fi or Ethernet only, never into another VPN, even
+  one with a route for the address. A rule can name another VPN (action
+  `vpn`): its connections are bound to that VPN's tunnel interface, its
+  names get real answers from that VPN's resolvers, and while the VPN is
+  down they are refused. A VPN is named by what owns its interface (the
+  system's VPN service, or the process holding the utun open), since utun
+  numbers change on every reconnect; `vzhukhctl vpns` lists them.
+- The tunnel stands in front of other VPNs. For every route a VPN puts
+  into its interface the tunnel gets the two halves of it, one bit more
+  specific, so the VPN's traffic reaches the daemon first, shows in Traffic
+  and follows the rules. What no rule decides goes back into the VPN whose
+  network (/8 or narrower) or DNS domain it is, the way it went before.
+  Host routes cannot be beaten and stay with the VPN: its gateway and own
+  addresses. Pings follow the rules too: out of Wi-Fi, into a VPN, or
+  refused when blocked. Traffic tab → menu → "In front of other VPNs" turns
+  this off (`capture.leaveVpns`) for a VPN client that fights over its
+  routes; then its networks never reach the daemon and go into it whatever
+  the rules say.
+- Direct rules of public addresses alone, with no apps and ports, are kept
+  out of the tunnel by host routes, which is what another VPN's gateway
+  needs. "Leave to macOS" rules (action `system`) are what rules said
+  before a VPN could be named; the app turns them into `vpn` or `direct`
+  once a connected VPN tells which was meant.
 - The app polls; there are no subscriptions.
 - `Config.capture` narrows the tunnel to some prefixes and can leave DNS
   alone, for moving off another tool gradually.
