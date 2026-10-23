@@ -46,3 +46,6 @@ app.*.map.json
 
 # Generated icon renders; rebuilt by `just icons`.
 /assets/branding/out/
+
+# A plain `go build` in go/tun2socks drops its binary here.
+/go/tun2socks/tun2socks
