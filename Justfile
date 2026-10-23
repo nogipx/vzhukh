@@ -89,6 +89,23 @@ tunnel-test *args:
 macos: daemon
     fvm flutter build macos --release
 
+# Build and put the app in /Applications, over the installed one. The bundle
+# is updated in place rather than deleted and copied: an app that disappears
+# under the Dock comes back there with a stale icon until the Dock restarts.
+install-macos: macos
+    #!/usr/bin/env bash
+    set -euo pipefail
+    osascript -e 'tell application "vzhukh" to quit' >/dev/null 2>&1 || true
+    for _ in $(seq 1 20); do
+        pgrep -f "vzhukh.app/Contents/MacOS/vzhukh" >/dev/null || break
+        sleep 0.5
+    done
+    mkdir -p /Applications/vzhukh.app
+    rsync -a --delete "{{macos_app}}/" /Applications/vzhukh.app/
+    /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/vzhukh.app
+    killall Dock 2>/dev/null || true
+    open /Applications/vzhukh.app
+
 # Build vzhukhd, the macOS helper, for both architectures. with_gvisor is
 # what puts the packet stack in; without it sing-tun builds and then refuses
 # to start.
