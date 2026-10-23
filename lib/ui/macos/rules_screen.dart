@@ -1,12 +1,15 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 import '../../daemon/daemon_models.dart';
+import '../../daemon/traffic_analysis.dart';
 import '../../daemon/resolve_system_rules.dart';
 import '../../models/routing_rule.dart';
 import '../../models/rule_folders.dart';
+import '../../models/rule_overlaps.dart';
 import '../../models/tunnel_route.dart';
 import '../../storage/route_repository.dart';
 import '../../models/rule_set.dart';
@@ -95,6 +98,7 @@ class RulesScreenState extends State<RulesScreen> {
         _activeOwn = active.own;
       });
     }
+    unawaited(_loadSeen());
     if (resolved > 0) {
       await _apply();
       if (mounted) {
@@ -102,6 +106,36 @@ class RulesScreenState extends State<RulesScreen> {
             'its VPN, or goes direct.');
       }
     }
+  }
+
+  /// What recorded traffic shows the rules above taking from each rule.
+  Map<String, List<SeenOverlap>> _seen = const {};
+
+  /// The last hour of traffic the helper kept, or, from one that keeps no
+  /// statistics, the connections it still lists. Nothing without a helper.
+  Future<void> _loadSeen() async {
+    final mac = widget.vpn.macDaemon;
+    if (mac == null) return;
+    final traffic = <SeenTraffic>[];
+    try {
+      final stats = await mac.client.stats(window: 60);
+      for (final r in stats.rows) {
+        final row = TrafficRow.fromStat(r);
+        traffic.add((app: row.app, appPath: row.appPath, host: row.host, port: row.port, ruleId: row.ruleId, conns: row.conns));
+      }
+    } catch (_) {
+      try {
+        final snap = await mac.client.flows();
+        for (final f in [...snap.active, ...snap.closed]) {
+          final row = TrafficRow.fromFlow(f);
+          traffic.add((app: row.app, appPath: row.appPath, host: row.host, port: row.port, ruleId: row.ruleId, conns: 1));
+        }
+      } catch (_) {
+        return;
+      }
+    }
+    if (!mounted) return;
+    setState(() => _seen = const FindSeenOverlaps()(_rules, traffic));
   }
 
   /// The other VPNs connected now; none when the helper is not there.
@@ -318,6 +352,7 @@ class RulesScreenState extends State<RulesScreen> {
     if (!_activeOwn) return;
     setState(() => _rules = rules);
     await _repo.save(rules);
+    unawaited(_loadSeen());
     try {
       await widget.vpn.applyRules();
     } catch (e) {
@@ -498,6 +533,14 @@ class RulesScreenState extends State<RulesScreen> {
           const SizedBox(width: AppSpacing.sm),
           Text('${e.rules.length} rule${e.rules.length == 1 ? '' : 's'}',
               style: theme.textTheme.bodySmall?.copyWith(color: muted)),
+          if (f.collapsed &&
+              e.rules.any((r) => _overlaps[r.id]?.any((o) => o.kind == OverlapKind.shadowed) ?? false)) ...[
+            const SizedBox(width: AppSpacing.xs),
+            Tooltip(
+              message: 'A rule inside never applies',
+              child: Icon(Icons.warning_amber_rounded, size: 16, color: AppColors.of(context).warning),
+            ),
+          ],
         ],
       ),
       onTap: _activeOwn ? () => _save(_rules.updateFolder(f.copyWith(collapsed: !f.collapsed))) : null,
@@ -527,8 +570,114 @@ class RulesScreenState extends State<RulesScreen> {
     );
   }
 
+  /// What the rules above do to each rule; worked out once per build.
+  Map<String, List<RuleOverlap>> _overlaps = const {};
+
+  /// The worst of what is in [rule]'s way, as an icon with the details on
+  /// hover and tap.
+  Widget? _overlapMarker(RoutingRule rule) {
+    final found = _overlaps[rule.id];
+    if (found == null || found.isEmpty) return null;
+    final colors = AppColors.of(context);
+    final worst = [OverlapKind.shadowed, OverlapKind.redundant, OverlapKind.partly]
+        .firstWhere((k) => found.any((o) => o.kind == k));
+    final names = [for (final o in found) if (o.kind == worst) '"${o.above.name}"'];
+    final who = names.length <= 2 ? names.join(' and ') : '${names.take(2).join(', ')} and ${names.length - 2} more';
+    final (icon, color, text) = switch (worst) {
+      OverlapKind.shadowed => (Icons.warning_amber_rounded, colors.warning,
+          'Never applies: $who above takes all of it and sends it elsewhere.'),
+      OverlapKind.redundant => (Icons.layers_outlined, Theme.of(context).disabledColor,
+          'Changes nothing: $who above already sends all of it the same way.'),
+      OverlapKind.partly => (Icons.call_split, colors.info,
+          'Partly taken: $who above sends some of what this matches elsewhere.'),
+    };
+    return Tooltip(
+      message: text,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: () => showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text(rule.name),
+            content: SizedBox(
+              width: 420,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Rules are tried top to bottom and the first that matches decides. Above this one:'),
+                  const SizedBox(height: AppSpacing.sm),
+                  for (final o in found)
+                    Padding(
+                      padding: const EdgeInsets.only(top: AppSpacing.xs),
+                      child: Text('• "${o.above.name}" (${_actionLabel(o.above)}): ${switch (o.kind) {
+                        OverlapKind.shadowed => 'takes all of it',
+                        OverlapKind.redundant => 'takes all of it, the same way',
+                        OverlapKind.partly => 'takes part of it',
+                      }}'),
+                    ),
+                ],
+              ),
+            ),
+            actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+          ),
+        ),
+        child: Padding(padding: const EdgeInsets.all(2), child: Icon(icon, size: 16, color: color)),
+      ),
+    );
+  }
+
+  /// Traffic this rule would have matched that rules above took instead.
+  Widget? _seenMarker(RoutingRule rule) {
+    final seen = _seen[rule.id];
+    if (seen == null || seen.isEmpty) return null;
+    final total = seen.fold<int>(0, (n, o) => n + o.conns);
+    final first = seen.first;
+    final more = seen.length > 1 ? ' and ${seen.length - 1} more' : '';
+    return Tooltip(
+      message: 'Seen: $total connection${total == 1 ? '' : 's'} this matches went by '
+          '"${first.above.name}"$more above (${first.hosts.join(', ')}).',
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: () => showDialog<void>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            title: Text(rule.name),
+            content: SizedBox(
+              width: 440,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('Recorded traffic this rule matches, which rules above took first:'),
+                  const SizedBox(height: AppSpacing.sm),
+                  for (final o in seen)
+                    Padding(
+                      padding: const EdgeInsets.only(top: AppSpacing.xs),
+                      child: Text('• "${o.above.name}" (${_actionLabel(o.above)}): '
+                          '${o.conns} connection${o.conns == 1 ? '' : 's'}, ${o.hosts.join(', ')}'),
+                    ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Text('Move this rule above them if it should decide.',
+                      style: Theme.of(ctx).textTheme.bodySmall),
+                ],
+              ),
+            ),
+            actions: [TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(2),
+          child: Icon(Icons.history, size: 16, color: AppColors.of(context).info),
+        ),
+      ),
+    );
+  }
+
   Widget _row(RoutingRule r, {int? dragIndex, bool indent = false}) {
     final folder = _rules.folderOf(r);
+    final marker = _overlapMarker(r);
+    final seenMarker = _seenMarker(r);
     final inPlay = _rules.inPlay(r);
     final summary = _summary(r);
     return ListTile(
@@ -554,6 +703,8 @@ class RulesScreenState extends State<RulesScreen> {
           ),
           const SizedBox(width: AppSpacing.sm),
           _ActionBadge(action: r.action, label: _actionLabel(r), enabled: inPlay),
+          if (marker != null) ...[const SizedBox(width: AppSpacing.xs), marker],
+          if (seenMarker != null) ...[const SizedBox(width: AppSpacing.xs), seenMarker],
         ],
       ),
       // Out of the list's own order, the folder is the only hint of where
@@ -656,6 +807,7 @@ class RulesScreenState extends State<RulesScreen> {
     final rules = _rules.rules;
     final shown = rules.where(_matches).toList();
     final entries = _rules.entries();
+    _overlaps = const FindRuleOverlaps()(_rules);
     return Scaffold(
       appBar: AppBar(
         title: _setSelector(),
