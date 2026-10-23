@@ -5,6 +5,7 @@
 //	vzhukhctl start config.json
 //	vzhukhctl flows
 //	vzhukhctl vpns
+//	vzhukhctl restart
 //	vzhukhctl stop
 package main
 
@@ -21,7 +22,7 @@ import (
 func main() {
 	socket := flag.String("socket", "/var/run/vzhukhd.sock", "control socket")
 	flag.Usage = func() {
-		fmt.Fprintln(os.Stderr, "usage: vzhukhctl [-socket path] hello|status|start <config.json>|stop|flows [since]|vpns|nudge")
+		fmt.Fprintln(os.Stderr, "usage: vzhukhctl [-socket path] hello|status|start <config.json>|stop|flows [since]|vpns|nudge|restart")
 	}
 	flag.Parse()
 	if flag.NArg() == 0 {

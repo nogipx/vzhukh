@@ -236,7 +236,11 @@ Differences from the plan above:
 3. Rules tab: add the rules; connect a route.
 4. Traffic tab: every connection, with its app, domain, rule and route.
 
-To remove the helper: Traffic tab → menu → Uninstall helper.
+To restart the helper: Traffic tab → menu → Restart helper. One that answers
+restarts itself (launchd starts it again); one that does not, or is older than
+version 38, is restarted by launchd with an administrator's password. The
+tunnel reconnects if it was up. To remove the helper: Traffic tab → menu →
+Uninstall helper.
 
 Proxifier and the daemon cannot run at the same time, and the daemon
 refuses to start while Proxifier runs. Proxifier intercepts at the socket

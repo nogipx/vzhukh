@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../daemon/build_daemon_config.dart';
 import '../daemon/daemon_client.dart';
+import '../daemon/daemon_installer.dart';
 import '../daemon/daemon_models.dart';
 import '../models/tunnel_route.dart';
 import '../storage/helper_settings.dart';
@@ -52,6 +53,47 @@ class MacDaemonBackend {
   }
 
   Future<bool> isAvailable() async => await client.version() != null;
+
+  /// Restarts the helper, and the tunnel with it when it was up. A helper
+  /// that answers restarts itself; one that does not, or is too old to know
+  /// how, is restarted by launchd, which takes an administrator's password.
+  Future<void> restartHelper() async {
+    final wasActive = active;
+    final hops = _hops;
+    final ref = _ref ?? await _refs.load();
+    // Keeps the poll from reporting the gap as a failure.
+    _starting = true;
+    try {
+      final before = await client.hello();
+      var asked = false;
+      if (before != null) {
+        try {
+          await client.restart();
+          asked = true;
+        } on DaemonError {
+          // An older helper: launchd does it.
+        }
+      }
+      if (!asked) await const RestartDaemon()();
+      await _waitForNewHelper(before?.pid);
+    } finally {
+      _starting = false;
+    }
+    if (!wasActive) return;
+    final again = hops ?? (ref == null ? null : await ResolveConnectionRef(_servers, _routes)(ref));
+    if (again != null) await connect(again, ref);
+  }
+
+  /// Waits for a helper other than [oldPid] to answer. launchd holds a
+  /// restart back for up to ten seconds after the last one.
+  Future<void> _waitForNewHelper(int? oldPid) async {
+    for (var i = 0; i < 60; i++) {
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+      final now = await client.hello();
+      if (now != null && now.pid != oldPid) return;
+    }
+    throw TimeoutException('The network helper did not come back');
+  }
 
   Future<void> _tick() async {
     final DaemonStatus s;

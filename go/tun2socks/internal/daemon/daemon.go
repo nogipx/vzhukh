@@ -28,7 +28,7 @@ import (
 
 // Version is reported to the app, which offers to update an older helper.
 // Bump it with any change to the protocol or behaviour.
-const Version = "37"
+const Version = "38"
 
 // Config is everything the app sends to start the tunnel. Private keys
 // travel in Routes and stay in memory only.

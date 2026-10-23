@@ -1126,6 +1126,12 @@ class _HelperCardState extends State<_HelperCard> {
                         checked: !_leaveOtherVpns,
                       ),
                       SheetAction(
+                        'Restart helper',
+                        () => _run(() => widget.mac.restartHelper(), 'Helper restarted'),
+                        icon: Icons.restart_alt,
+                        subtitle: 'Reconnects if the tunnel was up',
+                      ),
+                      SheetAction(
                         'Uninstall helper',
                         () => _run(() => const UninstallDaemon()(), 'Helper removed'),
                         icon: Icons.delete_outline,

@@ -459,3 +459,31 @@ func TestSetRulesOnARunningTunnel(t *testing.T) {
 		t.Fatal("rules naming an unknown route accepted")
 	}
 }
+
+// "restart" answers first and only then ends the daemon, so the app hears
+// that it is coming; without a way to restart, it is refused.
+func TestIPCRestartAnswersThenRestarts(t *testing.T) {
+	d := newDaemon(t, &fakePlatform{})
+	restarted := make(chan struct{})
+	server := &IPCServer{Daemon: d, AllowedUID: -1, Logf: t.Logf, Restart: func() { close(restarted) }}
+
+	result, err := server.call(request{Method: "restart"})
+	if err != nil || result.(map[string]any)["restarting"] != true {
+		t.Fatalf("restart: %v %v", result, err)
+	}
+	select {
+	case <-restarted:
+		t.Fatal("restarted before the reply")
+	default:
+	}
+	select {
+	case <-restarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("never restarted")
+	}
+
+	plain := &IPCServer{Daemon: d, AllowedUID: -1, Logf: t.Logf}
+	if _, err := plain.call(request{Method: "restart"}); err == nil {
+		t.Fatal("a daemon that cannot restart said it would")
+	}
+}

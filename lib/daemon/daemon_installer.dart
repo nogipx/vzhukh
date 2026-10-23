@@ -105,6 +105,11 @@ chmod 0644 "$PLIST"
 launchctl bootstrap system "$PLIST"
 ''';
 
+const _restartScript = r'''
+set -eu
+launchctl kickstart -k system/dev.nogipx.vzhukh.daemon
+''';
+
 const _uninstallScript = r'''
 set -u
 LABEL=dev.nogipx.vzhukh.daemon
@@ -133,6 +138,18 @@ class InstallDaemon {
       'vzhukh installs a network helper to route traffic by app and domain.',
     );
   }
+}
+
+/// Restarts the helper through launchd, for one that does not answer or is
+/// too old to restart itself.
+class RestartDaemon {
+  const RestartDaemon();
+
+  Future<void> call() => _runAsAdmin(
+        _restartScript,
+        const [],
+        'vzhukh restarts its network helper.',
+      );
 }
 
 /// Removes the helper and puts the system's DNS settings back.

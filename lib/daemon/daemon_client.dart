@@ -98,14 +98,23 @@ class DaemonClient {
   }
 
   /// The daemon's version, or null when nothing is listening.
-  Future<String?> version() async {
+  Future<String?> version() async => (await hello())?.version;
+
+  /// The daemon's version and process, or null when nothing is listening.
+  /// A new process id is how a restart shows.
+  Future<({String version, int pid})?> hello() async {
     try {
       final result = await call('hello') as Map;
-      return result['version'] as String?;
+      return (version: result['version'] as String? ?? '', pid: result['pid'] as int? ?? 0);
     } catch (_) {
       return null;
     }
   }
+
+  /// Asks the daemon to restart: it stops the way launchd would stop it,
+  /// and launchd starts it again. A daemon older than this method answers
+  /// with a [DaemonError].
+  Future<void> restart() => call('restart');
 
   Future<DaemonStatus> status() async => DaemonStatus.fromJson(
       Map<String, dynamic>.from(await call('status') as Map));

@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 )
 
 // The app talks to the daemon over a Unix socket, one JSON object per line:
@@ -53,6 +54,10 @@ type IPCServer struct {
 	PeerUID func(net.Conn) (int, error)
 
 	Logf func(string, ...any)
+
+	// Restart ends the daemon the way a stop from launchd does, for launchd
+	// to start it again. Nil refuses the "restart" method.
+	Restart func()
 
 	mu    sync.Mutex
 	conns map[net.Conn]bool
@@ -209,6 +214,17 @@ func (s *IPCServer) call(req request) (any, error) {
 		return d.Flows(0), nil
 	case "vpns":
 		return d.VPNs(), nil
+	case "restart":
+		if s.Restart == nil {
+			return nil, errors.New("this helper cannot restart itself")
+		}
+		s.Logf("ipc: restart asked by the app")
+		// After the reply is out, so the app hears that it is coming.
+		go func() {
+			time.Sleep(200 * time.Millisecond)
+			s.Restart()
+		}()
+		return map[string]any{"restarting": true, "pid": os.Getpid()}, nil
 	case "nudge":
 		d.Nudge("asked by the app")
 		return d.Status(), nil

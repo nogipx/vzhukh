@@ -88,7 +88,15 @@ func main() {
 	}()
 
 	logf("vzhukhd %s: listening on %s for uid %d", daemon.Version, *socket, *uid)
-	server := &daemon.IPCServer{Daemon: d, AllowedUID: *uid, PeerUID: daemon.PeerUID, Logf: logf}
+	server := &daemon.IPCServer{
+		Daemon:     d,
+		AllowedUID: *uid,
+		PeerUID:    daemon.PeerUID,
+		Logf:       logf,
+		// The same clean shutdown as launchd's own stop; launchd's KeepAlive
+		// starts a new one.
+		Restart: func() { signals <- syscall.SIGTERM },
+	}
 	if err := server.Serve(ln); err != nil {
 		log.Fatalf("serve: %v", err)
 	}
