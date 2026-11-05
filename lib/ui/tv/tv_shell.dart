@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../storage/app_set_repository.dart';
+import '../../models/tunnel_route.dart';
 import '../../storage/route_repository.dart';
 import '../../storage/server_repository.dart';
 import '../../sync/lan_sync.dart';
@@ -179,7 +180,10 @@ class _TvShellState extends State<TvShell> {
           SheetAction('Address', () {}, icon: Icons.dns_outlined, subtitle: '${server.host}:${server.port}'),
         if (route != null)
           for (final (i, hop) in route.hops.indexed)
-            SheetAction('Hop ${i + 1}', () {}, icon: Icons.route_outlined, subtitle: serverName(hop.serverId)),
+            SheetAction('Hop ${i + 1}', () {}, icon: Icons.route_outlined, subtitle: switch (hop.type) {
+              HopType.socks5 => '${hop.host}:${hop.port ?? 1080}',
+              _ => serverName(hop.serverId!),
+            }),
         SheetAction('Owner', () {}, icon: Icons.person_outline, subtitle: owner ?? 'This TV'),
       ],
     );

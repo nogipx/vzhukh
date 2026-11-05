@@ -56,6 +56,18 @@ class _ExportRouteScreenState extends State<ExportRouteScreen> {
   }
 
   Future<void> _loadServers() async {
+    if (widget.route.hops.any((h) => h.type == HopType.socks5)) {
+      // An invite carries fresh server users and keys per hop. A SOCKS5 hop
+      // has neither, and neither side can keep it alive, so routes mixing
+      // one cannot be shared this way yet.
+      if (mounted) {
+        setState(() {
+          _error = 'Routes with SOCKS5 hops cannot be shared yet';
+          _loading = false;
+        });
+      }
+      return;
+    }
     try {
       final all = await _repo.getServers();
       final servers = [

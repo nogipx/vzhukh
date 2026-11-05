@@ -89,7 +89,7 @@ class ResolveConnectionRef {
       orElse: () => throw Exception('Connection of "${ref.label}" no longer exists'),
     );
     return [
-      ResolvedHop(
+      ResolvedHop.ssh(
         server: server,
         identity: SshIdentity(
           id: connection.id,

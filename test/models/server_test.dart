@@ -7,7 +7,7 @@ import 'package:vzhukh/vpn/ios_vpn_bridge.dart';
 Server _server(String id, [List<String> dns = const []]) =>
     Server(id: id, host: '$id.example', port: 22, nickname: id, dnsServers: dns);
 
-ResolvedHop _hop(Server s) => ResolvedHop(
+ResolvedHop _hop(Server s) => ResolvedHop.ssh(
       server: s,
       identity: SshIdentity(
         id: 'c-${s.id}',

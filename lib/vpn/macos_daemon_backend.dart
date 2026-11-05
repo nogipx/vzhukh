@@ -145,7 +145,7 @@ class MacDaemonBackend {
   Future<Map<String, dynamic>> _config(List<ResolvedHop> hops, ConnectionRef? ref) async {
     return BuildDaemonConfig(_routes, RouteResolver(_servers).resolve)(
       connected: hops,
-      connectedLabel: ref?.label ?? hops.last.server.nickname,
+      connectedLabel: ref?.label ?? hops.last.displayName,
       connectedTunnelRouteId: ref?.routeId,
       rules: await _rules.effective(),
       leaveOtherVpns: await const HelperSettings().leaveOtherVpns(),

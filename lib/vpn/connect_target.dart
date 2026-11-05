@@ -172,7 +172,7 @@ class ConnectToTarget {
     }
     await vpn.connect(
       [
-        ResolvedHop(
+        ResolvedHop.ssh(
           server: server,
           identity: SshIdentity(
             id: connection.id,

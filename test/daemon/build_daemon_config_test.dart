@@ -15,7 +15,7 @@ class _Routes implements RouteRepository {
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
-ResolvedHop _hop(String host) => ResolvedHop(
+ResolvedHop _hop(String host) => ResolvedHop.ssh(
       server: Server(id: host, host: host, port: 22, nickname: host),
       identity: SshIdentity(
         id: 'c-$host',
@@ -27,8 +27,8 @@ ResolvedHop _hop(String host) => ResolvedHop(
       ),
     );
 
-const _home = TunnelRoute(id: 'home', label: 'Home', hops: [RouteHop(serverId: 'h', connectionId: 'c')]);
-const _work = TunnelRoute(id: 'work', label: 'Work', hops: [RouteHop(serverId: 'w', connectionId: 'c')]);
+const _home = TunnelRoute(id: 'home', label: 'Home', hops: [RouteHop.ssh(serverId: 'h', connectionId: 'c')]);
+const _work = TunnelRoute(id: 'work', label: 'Work', hops: [RouteHop.ssh(serverId: 'w', connectionId: 'c')]);
 
 void main() {
   final resolved = <String>[];
@@ -144,6 +144,33 @@ void main() {
       BuildDaemonConfig.routesUsed(RoutingRules(rules: [rules.rules[1].copyWith(enabled: true)])),
       {'work'},
     );
+  });
+
+  test('a SOCKS5 hop reaches the daemon as a bare host and port', () async {
+    final cfg = await BuildDaemonConfig(_Routes([]), resolve)(
+      connected: [
+        _hop('a.example'),
+        const ResolvedHop.socks5(host: '127.0.0.1', port: 1080),
+      ],
+      connectedLabel: 'A',
+      rules: const RoutingRules(),
+    );
+    final hops = (cfg['routes'] as List).single['hops'] as List;
+    expect(hops[0], isNot(contains('type')));
+    expect(hops[1], {'type': 'socks5', 'host': '127.0.0.1', 'port': 1080});
+  });
+
+  test('route hops survive a round trip through JSON, old payloads stay SSH', () {
+    const socks = RouteHop.socks5(host: '127.0.0.1', port: 1080);
+    expect(RouteHop.fromJson(socks.toJson()).type, HopType.socks5);
+
+    // Routes saved before hop types existed have no 'type' key; they must
+    // still resolve as SSH hops.
+    final legacy = RouteHop.fromJson(
+        const {'serverId': 'h', 'connectionId': 'c'});
+    expect(legacy.type, HopType.ssh);
+    expect(legacy.serverId, 'h');
+    expect(legacy.connectionId, 'c');
   });
 
   test('rules survive a round trip through JSON', () {

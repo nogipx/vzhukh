@@ -1,5 +1,5 @@
-// Package sshtun opens a chain of SSH connections and hands out a dialer that
-// reaches the internet from the far end of it.
+// Package sshtun opens a chain of SSH connections and SOCKS5 proxies and
+// hands out a dialer that reaches the internet from the far end of it.
 //
 // This is the Go counterpart of lib/vpn/ssh_tunnel.dart. The Dart version
 // exists because on Android the tunnel lives inside the Flutter process. On
@@ -17,26 +17,50 @@ import (
 	"fmt"
 	"net"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/net/proxy"
 )
 
-// Hop is one SSH server in the chain, along with the credentials for it.
+// HopType is what a hop speaks: SSH (the default) or a plain SOCKS5 proxy.
+type HopType string
+
+const (
+	HopSSH    HopType = "ssh"
+	HopSOCKS5 HopType = "socks5"
+)
+
+// Hop is one SSH server or SOCKS5 proxy in the chain, along with the
+// credentials for it. A SOCKS5 hop carries no credentials: host and port
+// are all it needs.
 type Hop struct {
-	Host          string `json:"host"`
-	Port          int    `json:"port"`
-	Username      string `json:"username"`
-	Password      string `json:"password,omitempty"`
-	PrivateKeyPEM string `json:"privateKeyPem,omitempty"`
-	Passphrase    string `json:"passphrase,omitempty"`
+	Type          HopType `json:"type,omitempty"`
+	Host          string  `json:"host"`
+	Port          int     `json:"port"`
+	Username      string  `json:"username,omitempty"`
+	Password      string  `json:"password,omitempty"`
+	PrivateKeyPEM string  `json:"privateKeyPem,omitempty"`
+	Passphrase    string  `json:"passphrase,omitempty"`
+}
+
+func (h Hop) typ() HopType {
+	if h.Type == "" {
+		return HopSSH
+	}
+	return h.Type
 }
 
 func (h Hop) addr() string {
 	port := h.Port
 	if port == 0 {
-		port = 22
+		if h.typ() == HopSOCKS5 {
+			port = 1080
+		} else {
+			port = 22
+		}
 	}
 	return net.JoinHostPort(h.Host, strconv.Itoa(port))
 }
@@ -82,14 +106,27 @@ const (
 
 var errNoHops = errors.New("sshtun: at least one hop is required")
 
-// Chain is a live chain of SSH connections. Dial it to reach the internet as
-// the last hop sees it.
+// Chain is a live chain of hops. Dial it to reach the internet as the last
+// hop sees it.
 type Chain struct {
 	clients []*ssh.Client
 
-	// last is the far end, kept apart from clients so that Close, which
-	// clears clients, cannot race a DialContext into indexing an empty slice.
-	last *ssh.Client
+	// endpoint is the far end as a dialer: the last SSH hop, or the SOCKS5
+	// dialer of the last hop when that one is a proxy. Kept apart from
+	// clients so that Close, which clears clients, cannot race a DialContext.
+	endpoint ContextDialer
+
+	// lastSSH is the final hop when it is an SSH server. Only an SSH hop
+	// holds a persistent connection that can die quietly, so only then is
+	// there anything to watch and poke with SSH keepalives.
+	lastSSH *ssh.Client
+
+	// proxyAddr and reachProxy describe a SOCKS5 final hop for probing: the
+	// proxy address, and the dialer that reaches it (the hop before it, or
+	// the base dialer when it is the only hop). A TCP connection that far
+	// and back is the SOCKS5 analogue of a keepalive.
+	proxyAddr  string
+	reachProxy ContextDialer
 
 	keepAliveTimeout time.Duration
 
@@ -123,36 +160,70 @@ func Dial(ctx context.Context, cfg Config) (*Chain, error) {
 
 	c := &Chain{done: make(chan struct{})}
 
+	// reach dials the next hop: the base dialer for the first hop, the hop
+	// before for every later one. Loopback goes unbound even when the base
+	// dialer is pinned to an interface: a socket bound to a physical
+	// interface cannot reach 127.0.0.1 at all, and that is where a
+	// reverse-forwarded SOCKS5 port (ssh -R) lives. Loopback never routes
+	// into the tunnel, so the binding buys nothing there.
+	reach := ContextDialer(&localFirstDialer{bound: base})
+
 	for i, hop := range cfg.Hops {
-		clientCfg, err := clientConfig(hop, timeout)
-		if err != nil {
-			c.closeClients()
-			return nil, fmt.Errorf("sshtun: hop %d (%s): %w", i, hop.Host, err)
-		}
+		switch hop.typ() {
+		case HopSSH:
+			clientCfg, err := clientConfig(hop, timeout)
+			if err != nil {
+				c.closeClients()
+				return nil, fmt.Errorf("sshtun: hop %d (%s): %w", i, hop.Host, err)
+			}
 
-		conn, err := c.dialHop(ctx, base, i, hop, timeout)
-		if err != nil {
-			c.closeClients()
-			return nil, fmt.Errorf("sshtun: hop %d (%s): dial: %w", i, hop.Host, err)
-		}
+			conn, err := dialThrough(ctx, reach, hop.addr(), timeout)
+			if err != nil {
+				c.closeClients()
+				return nil, fmt.Errorf("sshtun: hop %d (%s): dial: %w", i, hop.Host, err)
+			}
 
-		sshConn, chans, reqs, err := handshake(conn, hop.addr(), clientCfg, timeout)
-		if err != nil {
-			conn.Close()
-			c.closeClients()
-			return nil, fmt.Errorf("sshtun: hop %d (%s): handshake: %w", i, hop.Host, err)
-		}
+			sshConn, chans, reqs, err := handshake(conn, hop.addr(), clientCfg, timeout)
+			if err != nil {
+				conn.Close()
+				c.closeClients()
+				return nil, fmt.Errorf("sshtun: hop %d (%s): handshake: %w", i, hop.Host, err)
+			}
 
-		c.clients = append(c.clients, ssh.NewClient(sshConn, chans, reqs))
+			client := ssh.NewClient(sshConn, chans, reqs)
+			c.clients = append(c.clients, client)
+			c.lastSSH = client
+			reach = client
+
+		case HopSOCKS5:
+			// A proxy holds no connection of its own: each dial through it
+			// opens a fresh TCP connection and runs the SOCKS5 handshake on
+			// it. The chain only has to remember how the proxy is reached so
+			// it can be probed.
+			socks, err := socksDialer(hop.addr(), reach)
+			if err != nil {
+				c.closeClients()
+				return nil, fmt.Errorf("sshtun: hop %d (%s): %w", i, hop.Host, err)
+			}
+			c.proxyAddr = hop.addr()
+			c.reachProxy = reach
+			c.lastSSH = nil
+			reach = socks
+
+		default:
+			c.closeClients()
+			return nil, fmt.Errorf("sshtun: hop %d (%s): unknown type %q", i, hop.Host, hop.Type)
+		}
 	}
 
-	last := c.clients[len(c.clients)-1]
-	c.last = last
+	c.endpoint = reach
 	c.keepAliveTimeout = cfg.KeepAliveTimeout
 	if c.keepAliveTimeout <= 0 {
 		c.keepAliveTimeout = defaultKeepAliveTimeout
 	}
-	go c.watch(last)
+	if c.lastSSH != nil {
+		go c.watch(c.lastSSH)
+	}
 
 	interval := cfg.KeepAliveInterval
 	if interval <= 0 {
@@ -163,24 +234,59 @@ func Dial(ctx context.Context, cfg Config) (*Chain, error) {
 	return c, nil
 }
 
-// dialHop reaches hop i: the first directly, the rest through the hop before.
-func (c *Chain) dialHop(
-	ctx context.Context,
-	base ContextDialer,
-	i int,
-	hop Hop,
-	timeout time.Duration,
-) (net.Conn, error) {
-	if i == 0 {
-		dialCtx, cancel := context.WithTimeout(ctx, timeout)
-		defer cancel()
-		return base.DialContext(dialCtx, "tcp", hop.addr())
-	}
-	// ssh.Client.DialContext opens a direct-tcpip channel on the previous
-	// hop, which is what puts this one behind it.
+// dialThrough opens a TCP connection to addr via reach, bounded by timeout.
+func dialThrough(ctx context.Context, reach ContextDialer, addr string, timeout time.Duration) (net.Conn, error) {
 	dialCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	return c.clients[i-1].DialContext(dialCtx, "tcp", hop.addr())
+	return reach.DialContext(dialCtx, "tcp", addr)
+}
+
+// localFirstDialer routes loopback destinations around a bound dialer. The
+// daemon binds the base dialer to the physical interface so the tunnel does
+// not carry its own SSH connection; that binding makes loopback connections
+// fail with "can't assign requested address", and a local SOCKS5 hop — the
+// usual product of ssh -R — is exactly loopback.
+type localFirstDialer struct {
+	bound ContextDialer
+}
+
+func (l *localFirstDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	if host, _, err := net.SplitHostPort(address); err == nil {
+		if ip := net.ParseIP(host); (ip != nil && ip.IsLoopback()) || strings.EqualFold(host, "localhost") {
+			return (&net.Dialer{}).DialContext(ctx, network, address)
+		}
+	}
+	return l.bound.DialContext(ctx, network, address)
+}
+
+// forwardDialer adapts a ContextDialer to the proxy.Dialer interface, so a
+// SOCKS5 hop can ride on whatever carries the hop before it.
+type forwardDialer struct {
+	d ContextDialer
+}
+
+func (f forwardDialer) Dial(network, addr string) (net.Conn, error) {
+	return f.DialContext(context.Background(), network, addr)
+}
+
+func (f forwardDialer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+	return f.d.DialContext(ctx, network, addr)
+}
+
+// socksDialer wraps a SOCKS5 proxy at addr so that every dial through it is
+// proxied. No authentication: a local reverse-forwarded port (ssh -R)
+// accepts anything on the machine it runs on, and that is the SOCKS5 hop's
+// main use.
+func socksDialer(addr string, reach ContextDialer) (ContextDialer, error) {
+	d, err := proxy.SOCKS5("tcp", addr, nil, forwardDialer{reach})
+	if err != nil {
+		return nil, err
+	}
+	cd, ok := d.(proxy.ContextDialer)
+	if !ok {
+		return nil, errors.New("socks5 dialer has no context support")
+	}
+	return cd, nil
 }
 
 // handshake runs the SSH handshake under a time limit the connection itself
@@ -308,7 +414,7 @@ func (c *Chain) DialContext(ctx context.Context, network, address string) (net.C
 	if closed {
 		return nil, errors.New("sshtun: chain is closed")
 	}
-	return c.last.DialContext(ctx, network, address)
+	return c.endpoint.DialContext(ctx, network, address)
 }
 
 // Dial is DialContext without a context, for callers holding a proxy.Dialer.
@@ -352,13 +458,16 @@ func (c *Chain) keepAlive(interval time.Duration) {
 	}
 }
 
-// Probe sends one keepalive to the last hop and waits for the reply, at most
-// KeepAliveTimeout or until ctx ends. A request that fails or goes unanswered
-// drops the chain: Done closes and Err says why.
+// Probe checks that the far end is still answering, at most KeepAliveTimeout
+// or until ctx ends. On an SSH final hop that is a keepalive request; on a
+// SOCKS5 one it is a TCP connection through the chain to the proxy, since a
+// proxy has no session to ping. A failed probe drops the chain: Done closes
+// and Err says why.
 //
-// The request travels every hop, so one probe covers the whole path. Callers
-// use it outside the regular interval when something suggests the chain may
-// have died unnoticed — the machine woke up, the network changed.
+// On an SSH chain the request travels every hop, so one probe covers the
+// whole path. Callers use it outside the regular interval when something
+// suggests the chain may have died unnoticed — the machine woke up, the
+// network changed.
 func (c *Chain) Probe(ctx context.Context) error {
 	select {
 	case <-c.done:
@@ -369,20 +478,15 @@ func (c *Chain) Probe(ctx context.Context) error {
 	default:
 	}
 
-	replied := make(chan error, 1)
-	go func() {
-		// A false reply is still a reply: it proves the far end is
-		// answering, which is all this is asking.
-		_, _, err := c.last.SendRequest("keepalive@openssh.com", true, nil)
-		replied <- err
-	}()
+	probeErr := make(chan error, 1)
+	go func() { probeErr <- c.probeOnce(ctx) }()
 
 	timer := time.NewTimer(c.keepAliveTimeout)
 	defer timer.Stop()
 
 	var err error
 	select {
-	case err = <-replied:
+	case err = <-probeErr:
 		if err != nil {
 			err = fmt.Errorf("sshtun: keepalive: %w", err)
 		}
@@ -396,11 +500,29 @@ func (c *Chain) Probe(ctx context.Context) error {
 	}
 	if err != nil {
 		c.drop(err)
-		// The hops have to go too: the request still blocked in SendRequest
-		// returns only once the connection under it closes.
-		c.closeClientsAfterDrop()
+		if c.lastSSH != nil {
+			// The hops have to go too: the request still blocked in
+			// SendRequest returns only once the connection under it closes.
+			c.closeClientsAfterDrop()
+		}
 	}
 	return err
+}
+
+// probeOnce performs the actual probe. A false reply from an SSH server is
+// still a reply: it proves the far end is answering, which is all this is
+// asking. A SOCKS5 probe opens and immediately closes a connection to the
+// proxy.
+func (c *Chain) probeOnce(ctx context.Context) error {
+	if c.lastSSH != nil {
+		_, _, err := c.lastSSH.SendRequest("keepalive@openssh.com", true, nil)
+		return err
+	}
+	conn, err := dialThrough(ctx, c.reachProxy, c.proxyAddr, c.keepAliveTimeout)
+	if err != nil {
+		return err
+	}
+	return conn.Close()
 }
 
 func (c *Chain) drop(err error) {

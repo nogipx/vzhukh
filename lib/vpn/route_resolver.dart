@@ -16,15 +16,20 @@ class RouteResolver {
     final resolved = <ResolvedHop>[];
 
     for (final hop in route.hops) {
+      if (hop.type == HopType.socks5) {
+        resolved.add(ResolvedHop.socks5(host: hop.host!, port: hop.port ?? 1080));
+        continue;
+      }
+
       final received = _received ?? ReceivedItems.instance;
       final servers = await _repo.getServers();
       final server = servers.where((s) => s.id == hop.serverId).firstOrNull ??
-          received.server(hop.serverId) ??
+          received.server(hop.serverId!) ??
           (throw Exception('Server ${hop.serverId} not found'));
 
       final connections = [
-        ...await _repo.getConnections(hop.serverId),
-        ...received.connections(hop.serverId),
+        ...await _repo.getConnections(hop.serverId!),
+        ...received.connections(hop.serverId!),
       ];
       final connection = connections.firstWhere(
         (c) => c.id == hop.connectionId,
@@ -37,7 +42,7 @@ class RouteResolver {
             'Connection "${connection.label}" has no private key on this device');
       }
 
-      resolved.add(ResolvedHop(
+      resolved.add(ResolvedHop.ssh(
         server: server,
         identity: SshIdentity(
           id: connection.id,

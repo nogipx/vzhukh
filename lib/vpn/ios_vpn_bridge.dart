@@ -40,7 +40,7 @@ class IosVpnBridge {
   /// The resolvers for a chain: the last hop's, since queries leave from
   /// there and only it may reach them. Shared with AndroidVpnBridge.
   static List<String> dnsServersFor(List<ResolvedHop> hops) {
-    final own = hops.last.server.dnsServers;
+    final own = hops.last.server!.dnsServers;
     return own.isEmpty ? Server.defaultDnsServers : own;
   }
 
@@ -62,6 +62,9 @@ class IosVpnBridge {
   Future<void> start(List<ResolvedHop> hops) async {
     if (hops.isEmpty) {
       throw ArgumentError('At least one hop is required');
+    }
+    if (hops.any((h) => h.type == HopType.socks5)) {
+      throw UnsupportedError('SOCKS5 hops are supported on macOS only');
     }
 
     final config = <String, dynamic>{
@@ -89,13 +92,13 @@ class IosVpnBridge {
   /// Swift model treats a missing key and an explicit null the same way and
   /// omitting them keeps the stored JSON smaller.
   static Map<String, dynamic> hopToJson(ResolvedHop hop) {
-    final password = hop.identity.password;
-    final privateKey = hop.identity.privateKeyPem;
+    final password = hop.identity!.password;
+    final privateKey = hop.identity!.privateKeyPem;
 
     return {
-      'host': hop.server.host,
-      'port': hop.server.port,
-      'username': hop.identity.username,
+      'host': hop.server!.host,
+      'port': hop.server!.port,
+      'username': hop.identity!.username,
       if (password != null && password.isNotEmpty) 'password': password,
       if (privateKey != null && privateKey.isNotEmpty) 'privateKeyPem': privateKey,
     };

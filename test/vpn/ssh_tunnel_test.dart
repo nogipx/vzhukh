@@ -236,7 +236,7 @@ class _TestServer {
     return _TestServer(process, port);
   }
 
-  ResolvedHop get hop => ResolvedHop(
+  ResolvedHop get hop => ResolvedHop.ssh(
         server: Server(id: 's', host: '127.0.0.1', port: port, nickname: 's'),
         identity: const SshIdentity(
           id: 'i',

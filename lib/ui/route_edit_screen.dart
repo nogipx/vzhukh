@@ -19,13 +19,48 @@ class RouteEditScreen extends StatefulWidget {
   State<RouteEditScreen> createState() => _RouteEditScreenState();
 }
 
+/// One hop being edited: an SSH hop picks a server and a connection, a
+/// SOCKS5 hop is typed in as host and port.
+class _HopEntry {
+  final HopType type;
+  Server? server;
+  Connection? connection;
+  final TextEditingController hostCtrl;
+  final TextEditingController portCtrl;
+
+  _HopEntry.ssh()
+      : type = HopType.ssh,
+        hostCtrl = TextEditingController(),
+        portCtrl = TextEditingController();
+
+  _HopEntry.socks5(String? host, int? port)
+      : type = HopType.socks5,
+        hostCtrl = TextEditingController(text: host ?? ''),
+        portCtrl = TextEditingController(text: port?.toString() ?? '');
+
+  void dispose() {
+    hostCtrl.dispose();
+    portCtrl.dispose();
+  }
+
+  bool get isComplete => switch (type) {
+        HopType.ssh => server != null && connection != null,
+        HopType.socks5 =>
+          hostCtrl.text.trim().isNotEmpty && int.tryParse(portCtrl.text.trim()) != null,
+      };
+
+  String get displayName => switch (type) {
+        HopType.ssh => server?.nickname ?? '?',
+        HopType.socks5 => '${hostCtrl.text.trim()}:${portCtrl.text.trim()}',
+      };
+}
+
 class _RouteEditScreenState extends State<RouteEditScreen> {
   final _labelCtrl = TextEditingController();
   final _serverRepo = ServerRepository();
   final _routeRepo = RouteRepository();
 
-  // Each hop is (server, connection) — both nullable while being picked.
-  final List<({Server? server, Connection? connection})> _hops = [];
+  final List<_HopEntry> _hops = [];
 
   List<Server> _servers = [];
   String? _appSetId;
@@ -46,13 +81,24 @@ class _RouteEditScreenState extends State<RouteEditScreen> {
       _labelCtrl.text = widget.existing!.label;
       await _setAppSet(widget.existing!.appSetId);
       for (final hop in widget.existing!.hops) {
+        if (hop.type == HopType.socks5) {
+          if (mounted) {
+            setState(() => _hops.add(_HopEntry.socks5(hop.host, hop.port)));
+          }
+          continue;
+        }
         final server = servers.firstWhere((s) => s.id == hop.serverId,
             orElse: () => throw Exception('Server not found'));
-        final connections = await _serverRepo.getConnections(hop.serverId);
+        final connections = await _serverRepo.getConnections(hop.serverId!);
         final conn = connections.firstWhere((c) => c.id == hop.connectionId,
             orElse: () => throw Exception('Connection not found'));
         if (mounted) {
-          setState(() => _hops.add((server: server, connection: conn)));
+          setState(() {
+            final entry = _HopEntry.ssh()
+              ..server = server
+              ..connection = conn;
+            _hops.add(entry);
+          });
         }
       }
     }
@@ -61,6 +107,9 @@ class _RouteEditScreenState extends State<RouteEditScreen> {
   @override
   void dispose() {
     _labelCtrl.dispose();
+    for (final hop in _hops) {
+      hop.dispose();
+    }
     super.dispose();
   }
 
@@ -69,7 +118,40 @@ class _RouteEditScreenState extends State<RouteEditScreen> {
     return all.where((c) => c.canConnect).toList();
   }
 
-  Future<void> _pickServer(int index) async {
+  Future<void> _addHop() async {
+    final type = await showDialog<HopType>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Hop type'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, HopType.ssh),
+            child: const ListTile(
+              leading: Icon(Icons.terminal),
+              title: Text('SSH server'),
+              subtitle: Text('Any server you can log into'),
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, HopType.socks5),
+            child: const ListTile(
+              leading: Icon(Icons.vpn_lock_outlined),
+              title: Text('SOCKS5 proxy'),
+              subtitle: Text('A proxy that is already running, e.g. a local port forwarded with ssh -R'),
+              contentPadding: EdgeInsets.zero,
+            ),
+          ),
+        ],
+      ),
+    );
+    if (type == null || !mounted) return;
+    setState(() {
+      _hops.add(type == HopType.socks5 ? _HopEntry.socks5(null, null) : _HopEntry.ssh());
+    });
+  }
+
+  Future<void> _pickServer(_HopEntry entry) async {
     if (_servers.isEmpty) return;
 
     final picked = await showDialog<Server>(
@@ -91,12 +173,13 @@ class _RouteEditScreenState extends State<RouteEditScreen> {
     if (picked == null) return;
 
     setState(() {
-      _hops[index] = (server: picked, connection: null);
+      entry.server = picked;
+      entry.connection = null;
     });
   }
 
-  Future<void> _pickConnection(int index) async {
-    final server = _hops[index].server;
+  Future<void> _pickConnection(_HopEntry entry) async {
+    final server = entry.server;
     if (server == null) return;
 
     final connections = await _connectableConnections(server.id);
@@ -126,7 +209,7 @@ class _RouteEditScreenState extends State<RouteEditScreen> {
     if (picked == null) return;
 
     setState(() {
-      _hops[index] = (server: server, connection: picked);
+      entry.connection = picked;
     });
   }
 
@@ -141,8 +224,11 @@ class _RouteEditScreenState extends State<RouteEditScreen> {
       return;
     }
     for (final hop in _hops) {
-      if (hop.server == null || hop.connection == null) {
-        showToast(context, 'Complete all hops');
+      if (!hop.isComplete) {
+        showToast(context, switch (hop.type) {
+          HopType.ssh => 'Complete all hops: pick a server and a connection',
+          HopType.socks5 => 'SOCKS5 hops need a host and a numeric port',
+        });
         return;
       }
     }
@@ -153,12 +239,19 @@ class _RouteEditScreenState extends State<RouteEditScreen> {
       id: widget.existing?.id ??
           'route_${DateTime.now().millisecondsSinceEpoch}',
       label: label,
-      hops: _hops
-          .map((h) => RouteHop(
+      hops: [
+        for (final h in _hops)
+          switch (h.type) {
+            HopType.ssh => RouteHop.ssh(
                 serverId: h.server!.id,
                 connectionId: h.connection!.id,
-              ))
-          .toList(),
+              ),
+            HopType.socks5 => RouteHop.socks5(
+                host: h.hostCtrl.text.trim(),
+                port: int.parse(h.portCtrl.text.trim()),
+              ),
+          },
+      ],
       appSetId: _appSetId,
     );
 
@@ -214,8 +307,7 @@ class _RouteEditScreenState extends State<RouteEditScreen> {
             children: [
               Text('Hops', style: theme.textTheme.titleMedium),
               TextButton.icon(
-                onPressed: () =>
-                    setState(() => _hops.add((server: null, connection: null))),
+                onPressed: _addHop,
                 icon: const Icon(Icons.add),
                 label: const Text('Add hop'),
               ),
@@ -234,16 +326,16 @@ class _RouteEditScreenState extends State<RouteEditScreen> {
             const SizedBox(height: AppSpacing.sm),
             _HopTile(
               index: i,
-              hop: _hops[i],
-              onPickServer: () => _pickServer(i),
-              onPickConnection: () => _pickConnection(i),
-              onRemove: () => setState(() => _hops.removeAt(i)),
+              entry: _hops[i],
+              onPickServer: () => _pickServer(_hops[i]),
+              onPickConnection: () => _pickConnection(_hops[i]),
+              onRemove: () => setState(() => _hops.removeAt(i).dispose()),
             ),
           ],
           if (_hops.length > 1) ...[
             const SizedBox(height: AppSpacing.md),
             Text(
-              'Traffic: this device → ${_hops.map((h) => h.server?.nickname ?? '?').join(' → ')} → Internet',
+              'Traffic: this device → ${_hops.map((h) => h.displayName).join(' → ')} → Internet',
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: theme.colorScheme.secondary),
             ),
@@ -267,14 +359,14 @@ class _RouteEditScreenState extends State<RouteEditScreen> {
 
 class _HopTile extends StatelessWidget {
   final int index;
-  final ({Server? server, Connection? connection}) hop;
+  final _HopEntry entry;
   final VoidCallback onPickServer;
   final VoidCallback onPickConnection;
   final VoidCallback onRemove;
 
   const _HopTile({
     required this.index,
-    required this.hop,
+    required this.entry,
     required this.onPickServer,
     required this.onPickConnection,
     required this.onRemove,
@@ -287,6 +379,7 @@ class _HopTile extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.all(AppSpacing.md),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             CircleAvatar(
               radius: 14,
@@ -294,41 +387,44 @@ class _HopTile extends StatelessWidget {
             ),
             const SizedBox(width: AppSpacing.md),
             Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  GestureDetector(
-                    onTap: onPickServer,
-                    child: Text(
-                      hop.server?.nickname ?? 'Tap to select server',
-                      style: TextStyle(
-                        color: hop.server == null
-                            ? theme.colorScheme.onSurfaceVariant
-                            : null,
-                        fontWeight: hop.server != null
-                            ? FontWeight.w500
-                            : FontWeight.normal,
-                      ),
-                    ),
-                  ),
-                  if (hop.server != null) ...[
-                    const SizedBox(height: AppSpacing.xs),
-                    GestureDetector(
-                      onTap: onPickConnection,
-                      child: Text(
-                        hop.connection != null
-                            ? '${hop.connection!.label} (${hop.connection!.username})'
-                            : 'Tap to select connection',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: hop.connection == null
-                              ? AppColors.of(context).warning
-                              : theme.colorScheme.secondary,
+              child: switch (entry.type) {
+                HopType.socks5 => _Socks5Fields(entry: entry),
+                HopType.ssh => Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      GestureDetector(
+                        onTap: onPickServer,
+                        child: Text(
+                          entry.server?.nickname ?? 'Tap to select server',
+                          style: TextStyle(
+                            color: entry.server == null
+                                ? theme.colorScheme.onSurfaceVariant
+                                : null,
+                            fontWeight: entry.server != null
+                                ? FontWeight.w500
+                                : FontWeight.normal,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ],
-              ),
+                      if (entry.server != null) ...[
+                        const SizedBox(height: AppSpacing.xs),
+                        GestureDetector(
+                          onTap: onPickConnection,
+                          child: Text(
+                            entry.connection != null
+                                ? '${entry.connection!.label} (${entry.connection!.username})'
+                                : 'Tap to select connection',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              color: entry.connection == null
+                                  ? AppColors.of(context).warning
+                                  : theme.colorScheme.secondary,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+              },
             ),
             IconButton(
               icon: const Icon(Icons.close, size: 18),
@@ -337,6 +433,39 @@ class _HopTile extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+class _Socks5Fields extends StatelessWidget {
+  final _HopEntry entry;
+
+  const _Socks5Fields({required this.entry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextFormField(
+          controller: entry.hostCtrl,
+          decoration: const InputDecoration(
+            labelText: 'SOCKS5 host',
+            hintText: '127.0.0.1',
+            isDense: true,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        TextFormField(
+          controller: entry.portCtrl,
+          decoration: const InputDecoration(
+            labelText: 'Port',
+            hintText: '1080',
+            isDense: true,
+          ),
+          keyboardType: TextInputType.number,
+        ),
+      ],
     );
   }
 }

@@ -299,11 +299,14 @@ class _SshChain {
   Future<Object?> get lost => _lost.future;
 
   static Future<_SshChain> dial(List<ResolvedHop> hops) async {
+    if (hops.any((h) => h.type == HopType.socks5)) {
+      throw UnsupportedError('SOCKS5 hops are supported on macOS only');
+    }
     final clients = <SSHClient>[];
     try {
       SSHSocket socket = await SSHSocket.connect(
-        hops.first.server.host,
-        hops.first.server.port,
+        hops.first.server!.host,
+        hops.first.server!.port,
         timeout: SshTunnel._connectTimeout,
       );
 
@@ -311,10 +314,10 @@ class _SshChain {
         final hop = hops[i];
         final client = buildSshClient(
           socket,
-          username: hop.identity.username,
-          password: hop.identity.password,
-          identities: hop.identity.privateKeyPem != null
-              ? [...SSHKeyPair.fromPem(hop.identity.privateKeyPem!)]
+          username: hop.identity!.username,
+          password: hop.identity!.password,
+          identities: hop.identity!.privateKeyPem != null
+              ? [...SSHKeyPair.fromPem(hop.identity!.privateKeyPem!)]
               : null,
           keepAliveInterval: null,
         );
@@ -326,7 +329,7 @@ class _SshChain {
           // SSHForwardChannel implements SSHSocket — pass directly to next
           // client.
           socket = await client
-              .forwardLocal(next.server.host, next.server.port)
+              .forwardLocal(next.server!.host, next.server!.port)
               .timeout(SshTunnel._forwardTimeout);
         }
       }

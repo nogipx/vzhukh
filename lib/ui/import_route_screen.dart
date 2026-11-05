@@ -124,7 +124,7 @@ class _ImportRouteScreenState extends State<ImportRouteScreen> {
           await _serverRepo.saveConnection(conn);
         }
 
-        hops.add(RouteHop(serverId: server.id, connectionId: conn.id));
+        hops.add(RouteHop.ssh(serverId: server.id, connectionId: conn.id));
       }
 
       final route = TunnelRoute(

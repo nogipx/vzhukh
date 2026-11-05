@@ -24,6 +24,9 @@ class AndroidVpnBridge {
   static const _channel = MethodChannel('dev.nogipx.vzhukh/vpn');
 
   Future<void> start(List<ResolvedHop> hops, {AppRoutingConfig? routing, String? name}) async {
+    if (hops.any((h) => h.type == HopType.socks5)) {
+      throw UnsupportedError('SOCKS5 hops are supported on macOS only');
+    }
     final config = jsonEncode({
       if (name != null) 'name': name,
       'hops': hops.map(IosVpnBridge.hopToJson).toList(),

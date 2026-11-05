@@ -112,12 +112,19 @@ class BuildDaemonConfig {
     };
   }
 
-  Map<String, dynamic> _hop(ResolvedHop hop) => {
-        'host': hop.server.host,
-        'port': hop.server.port,
-        'username': hop.identity.username,
-        if (hop.identity.password != null) 'password': hop.identity.password,
-        if (hop.identity.privateKeyPem != null)
-          'privateKeyPem': hop.identity.privateKeyPem,
+  Map<String, dynamic> _hop(ResolvedHop hop) => switch (hop.type) {
+        HopType.socks5 => {
+            'type': 'socks5',
+            'host': hop.host,
+            'port': hop.port ?? 1080,
+          },
+        _ => {
+            'host': hop.server!.host,
+            'port': hop.server!.port,
+            'username': hop.identity!.username,
+            if (hop.identity!.password != null) 'password': hop.identity!.password,
+            if (hop.identity!.privateKeyPem != null)
+              'privateKeyPem': hop.identity!.privateKeyPem,
+          },
       };
 }

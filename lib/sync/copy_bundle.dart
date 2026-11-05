@@ -50,7 +50,8 @@ class BuildCopyBundle {
     final serverIds = switch (item.split('/').first) {
       'server' => [item.substring('server/'.length)],
       'route' => [
-          for (final h in (value as Map)['hops'] as List) (h as Map)['serverId'] as String,
+          for (final h in (value as Map)['hops'] as List)
+            if ((h as Map)['type'] != 'socks5') h['serverId'] as String,
         ],
       _ => const <String>[],
     };
@@ -70,7 +71,8 @@ class BuildCopyBundle {
       final route = Map<String, dynamic>.from(value as Map);
       route['hops'] = [
         for (final h in route['hops'] as List)
-          {...(h as Map), 'connectionId': keys[h['serverId']]},
+          // SOCKS5 hops carry no credentials to remap; they copy as-is.
+          (h as Map)['type'] == 'socks5' ? h : {...h, 'connectionId': keys[h['serverId']]},
       ];
       out[item] = route;
     }

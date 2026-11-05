@@ -58,6 +58,115 @@ func TestSingleHopReachesTheOtherSide(t *testing.T) {
 	}
 }
 
+func TestSocks5HopReachesTheOtherSide(t *testing.T) {
+	t.Parallel()
+
+	echo := startEcho(t)
+	socks := startSocks5(t)
+
+	chain := dialChain(t, Config{Hops: []Hop{{
+		Type: HopSOCKS5,
+		Host: socks.host,
+		Port: socks.port,
+	}}})
+
+	if got := roundTrip(t, chain, echo.addr, "via socks"); got != "via socks" {
+		t.Errorf("got %q, want %q", got, "via socks")
+	}
+	if forwarded := socks.connectedTo(); !contains(forwarded, echo.addr) {
+		t.Errorf("proxy connected to %v, want it to include %s", forwarded, echo.addr)
+	}
+}
+
+func TestSocks5AfterSshTraversesBoth(t *testing.T) {
+	t.Parallel()
+
+	echo := startEcho(t)
+	server := startSSHServer(t, withPassword("one"))
+	socks := startSocks5(t)
+
+	chain := dialChain(t, Config{Hops: []Hop{
+		server.hop("root", "one"),
+		{Type: HopSOCKS5, Host: socks.host, Port: socks.port},
+	}})
+
+	if got := roundTrip(t, chain, echo.addr, "ssh then socks"); got != "ssh then socks" {
+		t.Errorf("got %q, want %q", got, "ssh then socks")
+	}
+	if forwarded := server.forwards(); !contains(forwarded, socks.addr) {
+		t.Errorf("ssh hop forwarded to %v, want it to include %s", forwarded, socks.addr)
+	}
+	if forwarded := socks.connectedTo(); !contains(forwarded, echo.addr) {
+		t.Errorf("proxy connected to %v, want it to include %s", forwarded, echo.addr)
+	}
+}
+
+func TestSocks5LoopbackBypassesTheBoundDialer(t *testing.T) {
+	t.Parallel()
+
+	// The daemon binds the base dialer to the physical interface, and a
+	// socket with that binding cannot reach loopback at all — which is
+	// where a reverse-forwarded SOCKS5 port lives. A loopback first hop
+	// must go out unbound.
+	bound := &interfaceBoundDialer{}
+	echo := startEcho(t)
+	socks := startSocks5(t)
+
+	chain := dialChain(t, Config{
+		Hops:       []Hop{{Type: HopSOCKS5, Host: socks.host, Port: socks.port}},
+		BaseDialer: bound,
+	})
+
+	if got := roundTrip(t, chain, echo.addr, "unbound"); got != "unbound" {
+		t.Errorf("got %q, want %q", got, "unbound")
+	}
+	if bound.calls != 0 {
+		t.Errorf("bound dialer was asked to reach loopback %d times", bound.calls)
+	}
+}
+
+// interfaceBoundDialer stands in for the daemon's physical-interface-bound
+// dialer: it fails loopback the way SO_BINDTODEVICE does.
+type interfaceBoundDialer struct{ calls int }
+
+func (b *interfaceBoundDialer) DialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	b.calls++
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return nil, errors.New("can't assign requested address (bound to en0)")
+	}
+	return (&net.Dialer{}).DialContext(ctx, network, address)
+}
+
+func TestSocks5ProbeFailsWhenProxyDies(t *testing.T) {
+	t.Parallel()
+
+	socks := startSocks5(t)
+	chain := dialChain(t, Config{Hops: []Hop{{
+		Type:              HopSOCKS5,
+		Host:              socks.host,
+		Port:              socks.port,
+	}}, KeepAliveInterval: time.Hour, KeepAliveTimeout: 300 * time.Millisecond})
+	t.Cleanup(func() { chain.Close() })
+
+	if err := chain.Probe(context.Background()); err != nil {
+		t.Fatalf("probe on a live proxy: %v", err)
+	}
+
+	socks.close()
+	if err := chain.Probe(context.Background()); err == nil {
+		t.Fatal("probe on a dead proxy succeeded")
+	}
+	select {
+	case <-chain.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("Done did not close after the proxy died")
+	}
+}
+
 func TestMultiHopTraversesEveryServer(t *testing.T) {
 	t.Parallel()
 
@@ -298,6 +407,135 @@ func roundTrip(t *testing.T, chain *Chain, addr, message string) string {
 		t.Fatalf("read: %v", err)
 	}
 	return string(buf)
+}
+
+// socks5Server is enough of a SOCKS5 proxy (no authentication, CONNECT
+// only) to prove that a chain reaches the internet through it.
+type socks5Server struct {
+	t    *testing.T
+	addr string
+	host string
+	port int
+	ln   net.Listener
+
+	mu      sync.Mutex
+	targets []string
+}
+
+func startSocks5(t *testing.T) *socks5Server {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	host, portStr, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("split %s: %v", ln.Addr(), err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("port %s: %v", portStr, err)
+	}
+
+	s := &socks5Server{t: t, addr: ln.Addr().String(), host: host, port: port, ln: ln}
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go s.serve(conn)
+		}
+	}()
+	return s
+}
+
+func (s *socks5Server) serve(conn net.Conn) {
+	defer conn.Close()
+
+	// Greeting: version 5, pick "no authentication".
+	greeting := make([]byte, 2)
+	if _, err := io.ReadFull(conn, greeting); err != nil || greeting[0] != 5 {
+		return
+	}
+	methods := make([]byte, greeting[1])
+	if _, err := io.ReadFull(conn, methods); err != nil {
+		return
+	}
+	if !containsBytes(methods, 0) {
+		conn.Write([]byte{5, 0xff})
+		return
+	}
+	if _, err := conn.Write([]byte{5, 0}); err != nil {
+		return
+	}
+
+	// Request: version, CONNECT, reserved, then the target address.
+	head := make([]byte, 4)
+	if _, err := io.ReadFull(conn, head); err != nil || head[0] != 5 || head[1] != 1 {
+		return
+	}
+	var host string
+	switch head[3] {
+	case 1: // IPv4
+		buf := make([]byte, 4)
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			return
+		}
+		host = net.IP(buf).String()
+	case 3: // domain
+		lenBuf := make([]byte, 1)
+		if _, err := io.ReadFull(conn, lenBuf); err != nil {
+			return
+		}
+		buf := make([]byte, lenBuf[0])
+		if _, err := io.ReadFull(conn, buf); err != nil {
+			return
+		}
+		host = string(buf)
+	default:
+		return
+	}
+	portBuf := make([]byte, 2)
+	if _, err := io.ReadFull(conn, portBuf); err != nil {
+		return
+	}
+	target := net.JoinHostPort(host, strconv.Itoa(int(portBuf[0])<<8|int(portBuf[1])))
+
+	s.mu.Lock()
+	s.targets = append(s.targets, target)
+	s.mu.Unlock()
+
+	remote, err := net.DialTimeout("tcp", target, 5*time.Second)
+	if err != nil {
+		conn.Write([]byte{5, 5, 0, 1, 0, 0, 0, 0, 0, 0})
+		return
+	}
+	defer remote.Close()
+	conn.Write([]byte{5, 0, 0, 1, 0, 0, 0, 0, 0, 0})
+
+	done := make(chan struct{}, 2)
+	go func() { io.Copy(remote, conn); done <- struct{}{} }()
+	go func() { io.Copy(conn, remote); done <- struct{}{} }()
+	<-done
+}
+
+func (s *socks5Server) connectedTo() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]string(nil), s.targets...)
+}
+
+func (s *socks5Server) close() { s.ln.Close() }
+
+func containsBytes(haystack []byte, needle byte) bool {
+	for _, b := range haystack {
+		if b == needle {
+			return true
+		}
+	}
+	return false
 }
 
 // echoServer sends back whatever it is given.
